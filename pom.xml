@@ -722,6 +722,12 @@
                 <version>${project.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-truera</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
             <!-- Trino external -->
             <dependency>
                 <groupId>io.trino.benchto</groupId>
