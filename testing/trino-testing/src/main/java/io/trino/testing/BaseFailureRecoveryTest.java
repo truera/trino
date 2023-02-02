@@ -99,7 +99,6 @@ public abstract class BaseFailureRecoveryTest
                         .put("retry-policy", retryPolicy.toString())
                         .put("retry-initial-delay", "0s")
                         .put("query-retry-attempts", "1")
-                        .put("task-retry-attempts-overall", "1")
                         .put("failure-injection.request-timeout", new Duration(REQUEST_TIMEOUT.toMillis() * 2, MILLISECONDS).toString())
                         // making http timeouts shorter so tests which simulate communication timeouts finish in reasonable amount of time
                         .put("exchange.http-client.idle-timeout", REQUEST_TIMEOUT.toString())
@@ -790,11 +789,15 @@ public abstract class BaseFailureRecoveryTest
     // 1. to allow implementations to add to the list of parallelTests
     // 2. to override the toString method so the test label is readable
     // It extends Runnable to keep the class private, while testParallel can take a Runnable
-    // TODO remove when error prone is updated for Java 17 records
-    @SuppressWarnings("unused")
     private record ParallelTestRunnable(String name, Runnable runnable)
             implements Runnable
     {
+        ParallelTestRunnable
+        {
+            requireNonNull(name, "name is null");
+            requireNonNull(runnable, "runnable is null");
+        }
+
         @Override
         public String toString()
         {
