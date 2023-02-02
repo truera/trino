@@ -167,7 +167,7 @@
               This dependency is here only to fool IntelliJ into compiling the project. -->
             <groupId>org.apache.phoenix</groupId>
             <artifactId>phoenix-client-embedded-hbase-2.2</artifactId>
-            <version>5.1.2</version>
+            <version>5.1.3</version>
             <scope>provided</scope>
             <optional>true</optional>
         </dependency>
