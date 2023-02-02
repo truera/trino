@@ -14,7 +14,7 @@
 package io.trino.plugin.truera;
 
 import io.trino.spi.Plugin;
-import io.trino.plugin.truera.aggregation.DivAggregation;
+import io.trino.plugin.truera.aggregation.ROCAUCAggregation;
 
 import java.util.Collections;
 import java.util.Set;
@@ -25,6 +25,6 @@ public class TrueraTrinoPlugin
     @Override
     public Set<Class<?>> getFunctions()
     {
-        return Collections.singleton(DivAggregation.class);
+        return Collections.singleton(ROCAUCAggregation.class);
     }
 }
