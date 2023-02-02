@@ -5046,6 +5046,21 @@ public abstract class BaseIcebergConnectorTest
     }
 
     @Test
+    public void testDropTableDeleteData()
+    {
+        String tableName = "test_drop_table_delete_data" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " (a_int) AS VALUES (1)", 1);
+        String tableLocation = getTableLocation(tableName);
+        assertUpdate("DROP TABLE " + tableName);
+
+        // Create a new table with the same location to verify the data was deleted in the above DROP TABLE
+        assertUpdate("CREATE TABLE " + tableName + "(a_int INTEGER) WITH (location = '" + tableLocation + "')");
+        assertQueryReturnsEmptyResult("SELECT * FROM " + tableName);
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
     public void testPathHiddenColumn()
     {
         String tableName = "test_path_" + randomNameSuffix();
@@ -5956,7 +5971,7 @@ public abstract class BaseIcebergConnectorTest
     }
 
     @Test(dataProvider = "partitionedAndBucketedProvider")
-    public void testMergeUpdateWithVariousLayouts(int writers, String partioning)
+    public void testMergeUpdateWithVariousLayouts(int writers, String partitioning)
     {
         Session session = Session.builder(getSession())
                 .setSystemProperty(TASK_WRITER_COUNT, String.valueOf(writers))
@@ -5964,7 +5979,7 @@ public abstract class BaseIcebergConnectorTest
 
         String targetTable = "merge_formats_target_" + randomNameSuffix();
         String sourceTable = "merge_formats_source_" + randomNameSuffix();
-        assertUpdate(format("CREATE TABLE %s (customer VARCHAR, purchase VARCHAR) %s", targetTable, partioning));
+        assertUpdate(format("CREATE TABLE %s (customer VARCHAR, purchase VARCHAR) %s", targetTable, partitioning));
 
         assertUpdate(format("INSERT INTO %s (customer, purchase) VALUES ('Dave', 'dates'), ('Lou', 'limes'), ('Carol', 'candles')", targetTable), 3);
         assertQuery("SELECT * FROM " + targetTable, "VALUES ('Dave', 'dates'), ('Lou', 'limes'), ('Carol', 'candles')");
