@@ -46,7 +46,7 @@
 
         <air.release.preparation-goals>clean verify -DskipTests</air.release.preparation-goals>
 
-        <dep.accumulo.version>1.7.4</dep.accumulo.version>
+        <dep.accumulo.version>2.1.0</dep.accumulo.version>
         <dep.accumulo-hadoop.version>2.7.7-1</dep.accumulo-hadoop.version>
         <dep.antlr.version>4.11.1</dep.antlr.version>
         <dep.airlift.version>223</dep.airlift.version>
@@ -1752,7 +1752,7 @@
             <dependency>
                 <groupId>org.apache.zookeeper</groupId>
                 <artifactId>zookeeper</artifactId>
-                <version>3.5.8</version>
+                <version>3.5.10</version>
                 <exclusions>
                     <exclusion>
                         <groupId>log4j</groupId>
