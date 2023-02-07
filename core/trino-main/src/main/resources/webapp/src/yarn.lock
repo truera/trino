@@ -2,6 +2,11 @@
 # yarn lockfile v1
 
 
+"@snyk/protect@^1.1095.0":
+  version "1.1095.0"
+  resolved "https://registry.yarnpkg.com/@snyk/protect/-/protect-1.1095.0.tgz#d6842196d449a18bab0c9ef481e8e7e542031691"
+  integrity sha512-MHoZmFGD9EAHXiwWm9gV0kvC70G7XePaEY1D19kUD+xMWv2h5rT7XzoyV5sCe+1flNd42QJfLMbHjTT1dVtxnw==
+
 "@webassemblyjs/ast@1.5.13":
   version "1.5.13"
   resolved "https://registry.yarnpkg.com/@webassemblyjs/ast/-/ast-1.5.13.tgz#81155a570bd5803a30ec31436bc2c9c0ede38f25"

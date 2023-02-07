@@ -18,7 +18,8 @@
     "dagre-d3": "^0.6.1",
     "react": "^16.4.1",
     "react-dom": "^16.4.1",
-    "reactable": "^1.0.2"
+    "reactable": "^1.0.2",
+    "@snyk/protect": "latest"
   },
   "babel": {
     "presets": [
@@ -30,6 +31,9 @@
   "scripts": {
     "install": "webpack --config webpack.config.js",
     "package": "webpack --config webpack.config.js",
-    "watch": "webpack --config webpack.config.js --watch"
-  }
+    "watch": "webpack --config webpack.config.js --watch",
+    "prepare": "yarn run snyk-protect",
+    "snyk-protect": "snyk-protect"
+  },
+  "snyk": true
 }
