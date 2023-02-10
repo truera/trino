@@ -1,5 +1,6 @@
 package io.trino.plugin.truera.state;
 
+import io.trino.plugin.truera.state.AreaUnderRocCurveState;
 import io.trino.plugin.truera.aggregation.GroupedRocAucCurve;
 import io.trino.spi.block.Block;
 import io.trino.spi.function.AccumulatorStateFactory;

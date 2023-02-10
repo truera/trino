@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <artifactId>trino-root</artifactId>
@@ -11,7 +9,6 @@
     </parent>
 
     <artifactId>trino-truera</artifactId>
-
     <description>Trino Truera Extensions</description>
     <packaging>trino-plugin</packaging>
 
@@ -22,12 +19,12 @@
     <dependencies>
         <dependency>
             <groupId>io.trino</groupId>
-            <artifactId>trino-spi</artifactId>
-            <scope>provided</scope>
+            <artifactId>trino-array</artifactId>
         </dependency>
         <dependency>
             <groupId>io.trino</groupId>
-            <artifactId>trino-array</artifactId>
+            <artifactId>trino-spi</artifactId>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>io.airlift</groupId>
@@ -40,5 +37,21 @@
             <scope>provided</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>com.mycila</groupId>
+                    <artifactId>license-maven-plugin</artifactId>
+                    <configuration>
+                        <excludes combine.children="append">
+                            <exclude>src/main/**</exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 
 </project>
