@@ -1,6 +1,5 @@
 package io.trino.plugin.truera;
 
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.stream.IntStream;
 
@@ -10,14 +9,26 @@ public class ROCAUCFunction {
                 Comparator.comparing(i -> scores[i], Comparator.reverseOrder())
         ).mapToInt(i->i).toArray();
 
-        int currTruePositives = 0, currFalsePositives = 0, prevTruePositives =0, prevFalsePositives = 0;
+//        for (int element: sortedIndices) {
+//            System.out.println(element);
+//        }
+
+        int currTruePositives = 0, currFalsePositives = 0;
         double auc = 0.;
 
         for (int i : sortedIndices) {
-            if (labels[i]) { currTruePositives++; } else { currFalsePositives++; };
-            prevTruePositives = currTruePositives;
-            prevFalsePositives = currFalsePositives;
+            int prevTruePositives = currTruePositives;
+            int prevFalsePositives = currFalsePositives;
+            if (labels[i]) { currTruePositives++; } else { currFalsePositives++; }
+//            System.out.println("FP");
+//            System.out.println(prevFalsePositives);
+//            System.out.println(currFalsePositives);
+//            System.out.println("TP");
+//            System.out.println(prevTruePositives);
+//            System.out.println(currTruePositives);
             auc += trapezoidIntegrate(prevFalsePositives, currFalsePositives, prevTruePositives, currTruePositives);
+//            System.out.println("auc");
+//            System.out.println(auc);
         }
 
         // If labels only contain one class, AUC is undefined
