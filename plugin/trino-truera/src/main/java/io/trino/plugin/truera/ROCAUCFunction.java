@@ -7,8 +7,8 @@ import java.util.stream.IntStream;
 public class ROCAUCFunction {
     public static double computeRocAuc(boolean[] labels, double[] scores) {
         int[] sortedIndices = IntStream.range(0, scores.length).boxed().sorted(
-                Comparator.comparing(i -> scores[i])
-        ).sorted(Collections.reverseOrder()).mapToInt(i->i).toArray();
+                Comparator.comparing(i -> scores[i], Comparator.reverseOrder())
+        ).mapToInt(i->i).toArray();
 
         int currTruePositives = 0, currFalsePositives = 0, prevTruePositives =0, prevFalsePositives = 0;
         double auc = 0.;
