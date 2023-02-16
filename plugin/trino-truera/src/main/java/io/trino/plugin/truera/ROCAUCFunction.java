@@ -9,31 +9,28 @@ public class ROCAUCFunction {
                 Comparator.comparing(i -> scores[i], Comparator.reverseOrder())
         ).mapToInt(i->i).toArray();
 
-//        for (int element: sortedIndices) {
-//            System.out.println(element);
-//        }
-
         int currTruePositives = 0, currFalsePositives = 0;
         double auc = 0.;
 
-        for (int i : sortedIndices) {
+        int i = 0;
+        while (i < sortedIndices.length) {
             int prevTruePositives = currTruePositives;
             int prevFalsePositives = currFalsePositives;
-            if (labels[i]) { currTruePositives++; } else { currFalsePositives++; }
-//            System.out.println("FP");
-//            System.out.println(prevFalsePositives);
-//            System.out.println(currFalsePositives);
-//            System.out.println("TP");
-//            System.out.println(prevTruePositives);
-//            System.out.println(currTruePositives);
+            double currentScore = scores[sortedIndices[i]];
+            while (i < sortedIndices.length && currentScore == scores[sortedIndices[i]]) {
+                if (labels[sortedIndices[i]]) {
+                    currTruePositives++;
+                } else {
+                    currFalsePositives++;
+                }
+                ++i;
+            }
             auc += trapezoidIntegrate(prevFalsePositives, currFalsePositives, prevTruePositives, currTruePositives);
-//            System.out.println("auc");
-//            System.out.println(auc);
         }
 
         // If labels only contain one class, AUC is undefined
         if (currTruePositives == 0 || currFalsePositives == 0) {
-            return Double.POSITIVE_INFINITY;
+            return Double.NaN;
         }
 
         return auc / (currTruePositives * currFalsePositives);
