@@ -37,6 +37,7 @@ public class TestKdbTreeCasts
     public void test()
     {
         String kdbTreeJson = makeKdbTreeJson();
+        System.out.println(kdbTreeJson);
         assertFunction(format("typeof(cast('%s' AS KdbTree))", kdbTreeJson), VARCHAR, "KdbTree");
         assertFunction(format("typeof(cast('%s' AS KDBTree))", kdbTreeJson), VARCHAR, "KdbTree");
         assertFunction(format("typeof(cast('%s' AS kdbTree))", kdbTreeJson), VARCHAR, "KdbTree");

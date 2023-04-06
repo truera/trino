@@ -1,10 +1,14 @@
 package io.trino.plugin.truera;
 
 import java.util.Comparator;
+import io.airlift.log.Logger;
 import java.util.stream.IntStream;
 
-public class ROCAUCFunction {
+public class AreaUnderRocCurveAlgorithm {
+    private static final Logger log = Logger.get(AreaUnderRocCurveAlgorithm.class);
     public static double computeRocAuc(boolean[] labels, double[] scores) {
+        log.info("cow");
+        log.info("compute", labels.toString(), scores.toString());
         int[] sortedIndices = IntStream.range(0, scores.length).boxed().sorted(
                 Comparator.comparing(i -> scores[i], Comparator.reverseOrder())
         ).mapToInt(i->i).toArray();

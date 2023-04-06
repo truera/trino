@@ -1,5 +1,6 @@
 package io.trino.plugin.truera.aggregation;
 
+import io.airlift.log.Logger;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,12 +16,13 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import org.openjdk.jol.info.ClassLayout;
 
-import static io.trino.plugin.truera.ROCAUCFunction.computeRocAuc;
+import static io.trino.plugin.truera.AreaUnderRocCurveAlgorithm.computeRocAuc;
 import static java.util.Objects.requireNonNull;
 
 public class GroupedRocAucCurve {
+    private static final Logger log = Logger.get(GroupedRocAucCurve.class);
 
-    private static final int INSTANCE_SIZE = ClassLayout.parseClass(GroupedRocAucCurve.class).instanceSize();
+    private static final long INSTANCE_SIZE = ClassLayout.parseClass(GroupedRocAucCurve.class).instanceSize();
     private static final int NULL = -1;
 
     // one entry per group
@@ -83,13 +85,15 @@ public class GroupedRocAucCurve {
             labels[i] = labelList.get(i);
         }
         double[] scores = scoreList.stream().mapToDouble(Double::doubleValue).toArray();
+        log.info("cow2");
+        log.info("compute", labels.toString(), scores.toString());
 
         // compute + return
         double auc = computeRocAuc(labels, scores);
-        if (Double.isFinite(auc)) {
-            DoubleType.DOUBLE.writeDouble(out, auc);
-        } else {
+        if (Double.isNaN(auc)) {
             out.appendNull();
+        } else {
+            DoubleType.DOUBLE.writeDouble(out, auc);
         }
     }
 
@@ -100,6 +104,10 @@ public class GroupedRocAucCurve {
     public GroupedRocAucCurve setGroupId(long groupId) {
         this.currentGroupId = groupId;
         return this;
+    }
+
+    public long getGroupId() {
+        return this.currentGroupId;
     }
 
     public void add(Block labelsBlock, Block scoresBlock, int labelPosition, int scorePosition) {

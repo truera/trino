@@ -1,6 +1,5 @@
 package io.trino.plugin.truera.state;
 
-import io.trino.plugin.truera.state.AreaUnderRocCurveState;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.function.AccumulatorStateSerializer;
@@ -13,7 +12,7 @@ import static io.trino.spi.type.RowType.anonymousRow;
 
 public class AreaUnderRocCurveStateSerializer implements AccumulatorStateSerializer<AreaUnderRocCurveState>
 {
-    private static final ArrayType SERIALIZED_TYPE = new ArrayType(anonymousRow(BooleanType.BOOLEAN, DoubleType.DOUBLE));
+    static final ArrayType SERIALIZED_TYPE = new ArrayType(anonymousRow(BooleanType.BOOLEAN, DoubleType.DOUBLE));
 
     @Override
     public Type getSerializedType() {

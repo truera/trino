@@ -1,6 +1,5 @@
 package io.trino.plugin.truera.state;
 
-import io.trino.plugin.truera.state.AreaUnderRocCurveState;
 import io.trino.plugin.truera.aggregation.GroupedRocAucCurve;
 import io.trino.spi.block.Block;
 import io.trino.spi.function.AccumulatorStateFactory;
@@ -22,7 +21,7 @@ public class AreaUnderRocCurveStateFactory implements AccumulatorStateFactory<Ar
     }
 
     public static class GroupedState  implements AreaUnderRocCurveState, GroupedAccumulatorState {
-        private static final int INSTANCE_SIZE = ClassLayout.parseClass(GroupedState.class).instanceSize();
+        private static final long INSTANCE_SIZE = ClassLayout.parseClass(GroupedState.class).instanceSize();
         private GroupedRocAucCurve auc;
         private long size;
 
@@ -82,7 +81,7 @@ public class AreaUnderRocCurveStateFactory implements AccumulatorStateFactory<Ar
     public static class SingleState
             implements AreaUnderRocCurveState
     {
-        private static final int INSTANCE_SIZE = ClassLayout.parseClass(SingleState.class).instanceSize();
+        private static final long INSTANCE_SIZE = ClassLayout.parseClass(SingleState.class).instanceSize();
         private GroupedRocAucCurve auc;
 
         public SingleState()
