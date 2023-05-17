@@ -81,6 +81,10 @@
             <artifactId>trino-hive-hadoop2</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-main</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
