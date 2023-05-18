@@ -14,8 +14,21 @@
 package io.trino.plugin.iceberg;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import io.minio.messages.Event;
 import io.trino.Session;
+import io.trino.filesystem.TrinoFileSystemFactory;
+import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
+import io.trino.hdfs.ConfigurationInitializer;
+import io.trino.hdfs.DynamicHdfsConfiguration;
+import io.trino.hdfs.HdfsConfig;
+import io.trino.hdfs.HdfsConfiguration;
+import io.trino.hdfs.HdfsConfigurationInitializer;
+import io.trino.hdfs.HdfsEnvironment;
+import io.trino.hdfs.TrinoHdfsFileSystemStats;
+import io.trino.hdfs.authentication.NoHdfsAuthentication;
+import io.trino.hdfs.s3.HiveS3Config;
+import io.trino.hdfs.s3.TrinoS3ConfigurationInitializer;
 import io.trino.plugin.hive.containers.HiveMinioDataLake;
 import io.trino.plugin.hive.metastore.HiveMetastore;
 import io.trino.plugin.hive.metastore.thrift.BridgingHiveMetastore;
@@ -43,6 +56,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 public abstract class BaseIcebergMinioConnectorSmokeTest
         extends BaseIcebergConnectorSmokeTest
 {
+    protected final TrinoFileSystemFactory fileSystemFactory;
+
     private final String schemaName;
     private final String bucketName;
 
@@ -53,6 +68,13 @@ public abstract class BaseIcebergMinioConnectorSmokeTest
         super(format);
         this.schemaName = "tpch_" + format.name().toLowerCase(ENGLISH);
         this.bucketName = "test-iceberg-minio-smoke-test-" + randomNameSuffix();
+
+        ConfigurationInitializer s3Config = new TrinoS3ConfigurationInitializer(new HiveS3Config()
+                .setS3AwsAccessKey(MINIO_ACCESS_KEY)
+                .setS3AwsSecretKey(MINIO_SECRET_KEY));
+        HdfsConfigurationInitializer initializer = new HdfsConfigurationInitializer(new HdfsConfig(), ImmutableSet.of(s3Config));
+        HdfsConfiguration hdfsConfiguration = new DynamicHdfsConfiguration(initializer, ImmutableSet.of());
+        this.fileSystemFactory = new HdfsFileSystemFactory(new HdfsEnvironment(hdfsConfiguration, new HdfsConfig(), new NoHdfsAuthentication()), new TrinoHdfsFileSystemStats());
     }
 
     @Override
@@ -75,6 +97,7 @@ public abstract class BaseIcebergMinioConnectorSmokeTest
                                 .put("hive.s3.path-style-access", "true")
                                 .put("hive.s3.streaming.part-size", "5MB")
                                 .put("iceberg.register-table-procedure.enabled", "true")
+                                .put("iceberg.writer-sort-buffer-size", "1MB")
                                 .buildOrThrow())
                 .setSchemaInitializer(
                         SchemaInitializer.builder()
@@ -183,7 +206,7 @@ public abstract class BaseIcebergMinioConnectorSmokeTest
 
         assertThat(query("SELECT * FROM " + tableName))
                 .matches("VALUES (VARCHAR 'one', 1), (VARCHAR 'two', 2)");
-        assertThat(events).hasSize(2);
+        assertThat(events).hasSize(3);
         // if files were deleted in batch there should be only one request id because there was one request only
         assertThat(events.stream()
                 .map(event -> event.responseElements().get("x-amz-request-id"))

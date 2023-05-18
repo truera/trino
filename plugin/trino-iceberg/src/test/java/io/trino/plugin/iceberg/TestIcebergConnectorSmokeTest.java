@@ -14,6 +14,7 @@
 package io.trino.plugin.iceberg;
 
 import com.google.common.collect.ImmutableMap;
+import io.trino.filesystem.Location;
 import io.trino.plugin.hive.metastore.HiveMetastore;
 import io.trino.testing.QueryRunner;
 import org.testng.annotations.AfterClass;
@@ -26,7 +27,9 @@ import java.nio.file.Path;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
-import static io.trino.plugin.hive.metastore.file.FileHiveMetastore.createTestingFileHiveMetastore;
+import static io.trino.plugin.hive.HiveTestUtils.HDFS_FILE_SYSTEM_FACTORY;
+import static io.trino.plugin.hive.metastore.file.TestingFileHiveMetastore.createTestingFileHiveMetastore;
+import static io.trino.plugin.iceberg.IcebergTestUtils.checkOrcFileSorting;
 import static java.lang.String.format;
 import static org.apache.iceberg.FileFormat.ORC;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,7 +57,9 @@ public class TestIcebergConnectorSmokeTest
         return IcebergQueryRunner.builder()
                 .setInitialTables(REQUIRED_TPCH_TABLES)
                 .setMetastoreDirectory(metastoreDir)
-                .setIcebergProperties(ImmutableMap.of("iceberg.register-table-procedure.enabled", "true"))
+                .setIcebergProperties(ImmutableMap.of(
+                        "iceberg.register-table-procedure.enabled", "true",
+                        "iceberg.writer-sort-buffer-size", "1MB"))
                 .build();
     }
 
@@ -101,5 +106,11 @@ public class TestIcebergConnectorSmokeTest
         catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    @Override
+    protected boolean isFileSorted(Location path, String sortColumnName)
+    {
+        return checkOrcFileSorting(HDFS_FILE_SYSTEM_FACTORY, path, sortColumnName);
     }
 }

@@ -14,14 +14,22 @@
 package io.trino.plugin.hive;
 
 import com.google.common.collect.ImmutableList;
+import io.trino.filesystem.Location;
 import io.trino.plugin.hive.HivePageSourceProvider.BucketAdaptation;
 import io.trino.plugin.hive.HivePageSourceProvider.ColumnMapping;
+import io.trino.plugin.hive.coercions.CharCoercer;
 import io.trino.plugin.hive.coercions.DoubleToFloatCoercer;
 import io.trino.plugin.hive.coercions.FloatToDoubleCoercer;
 import io.trino.plugin.hive.coercions.IntegerNumberToVarcharCoercer;
 import io.trino.plugin.hive.coercions.IntegerNumberUpscaleCoercer;
+import io.trino.plugin.hive.coercions.TimestampCoercer.LongTimestampToVarcharCoercer;
+import io.trino.plugin.hive.coercions.TimestampCoercer.ShortTimestampToVarcharCoercer;
 import io.trino.plugin.hive.coercions.VarcharCoercer;
 import io.trino.plugin.hive.coercions.VarcharToIntegerNumberCoercer;
+import io.trino.plugin.hive.type.Category;
+import io.trino.plugin.hive.type.ListTypeInfo;
+import io.trino.plugin.hive.type.MapTypeInfo;
+import io.trino.plugin.hive.type.TypeInfo;
 import io.trino.plugin.hive.util.HiveBucketing.BucketingVersion;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
@@ -38,17 +46,16 @@ import io.trino.spi.block.RunLengthEncodedBlock;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.RecordCursor;
 import io.trino.spi.metrics.Metrics;
+import io.trino.spi.type.ArrayType;
+import io.trino.spi.type.CharType;
 import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.MapType;
+import io.trino.spi.type.RowType;
+import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeManager;
 import io.trino.spi.type.VarcharType;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
-import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 
 import javax.annotation.Nullable;
 
@@ -83,9 +90,6 @@ import static io.trino.plugin.hive.coercions.DecimalCoercers.createDoubleToDecim
 import static io.trino.plugin.hive.coercions.DecimalCoercers.createRealToDecimalCoercer;
 import static io.trino.plugin.hive.util.HiveBucketing.getHiveBucket;
 import static io.trino.plugin.hive.util.HiveUtil.extractStructFieldTypes;
-import static io.trino.plugin.hive.util.HiveUtil.isArrayType;
-import static io.trino.plugin.hive.util.HiveUtil.isMapType;
-import static io.trino.plugin.hive.util.HiveUtil.isRowType;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.block.ColumnarArray.toColumnarArray;
 import static io.trino.spi.block.ColumnarMap.toColumnarMap;
@@ -118,10 +122,12 @@ public class HivePageSource
             Optional<BucketValidator> bucketValidator,
             Optional<ReaderProjectionsAdapter> projectionsAdapter,
             TypeManager typeManager,
+            HiveTimestampPrecision timestampPrecision,
             ConnectorPageSource delegate)
     {
         requireNonNull(columnMappings, "columnMappings is null");
         requireNonNull(typeManager, "typeManager is null");
+        requireNonNull(timestampPrecision, "timestampPrecision is null");
 
         this.delegate = requireNonNull(delegate, "delegate is null");
         this.columnMappings = columnMappings;
@@ -149,7 +155,7 @@ public class HivePageSource
                         .orElse(ImmutableList.of());
                 HiveType fromType = columnMapping.getBaseTypeCoercionFrom().get().getHiveTypeForDereferences(dereferenceIndices).get();
                 HiveType toType = columnMapping.getHiveColumnHandle().getHiveType();
-                coercers.add(createCoercer(typeManager, fromType, toType));
+                coercers.add(createCoercer(typeManager, fromType, toType, timestampPrecision));
             }
             else {
                 coercers.add(Optional.empty());
@@ -293,14 +299,14 @@ public class HivePageSource
         return delegate;
     }
 
-    private static Optional<Function<Block, Block>> createCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType)
+    public static Optional<Function<Block, Block>> createCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision timestampPrecision)
     {
         if (fromHiveType.equals(toHiveType)) {
             return Optional.empty();
         }
 
-        Type fromType = fromHiveType.getType(typeManager);
-        Type toType = toHiveType.getType(typeManager);
+        Type fromType = fromHiveType.getType(typeManager, timestampPrecision);
+        Type toType = toHiveType.getType(typeManager, timestampPrecision);
 
         if (toType instanceof VarcharType toVarcharType && (fromHiveType.equals(HIVE_BYTE) || fromHiveType.equals(HIVE_SHORT) || fromHiveType.equals(HIVE_INT) || fromHiveType.equals(HIVE_LONG))) {
             return Optional.of(new IntegerNumberToVarcharCoercer<>(fromType, toVarcharType));
@@ -311,6 +317,12 @@ public class HivePageSource
         if (fromType instanceof VarcharType fromVarcharType && toType instanceof VarcharType toVarcharType) {
             if (narrowerThan(toVarcharType, fromVarcharType)) {
                 return Optional.of(new VarcharCoercer(fromVarcharType, toVarcharType));
+            }
+            return Optional.empty();
+        }
+        if (fromType instanceof CharType fromCharType && toType instanceof CharType toCharType) {
+            if (narrowerThan(toCharType, fromCharType)) {
+                return Optional.of(new CharCoercer(fromCharType, toCharType));
             }
             return Optional.empty();
         }
@@ -347,17 +359,23 @@ public class HivePageSource
         if (fromType == REAL && toType instanceof DecimalType toDecimalType) {
             return Optional.of(createRealToDecimalCoercer(toDecimalType));
         }
-        if (isArrayType(fromType) && isArrayType(toType)) {
-            return Optional.of(new ListCoercer(typeManager, fromHiveType, toHiveType));
+        if (fromType instanceof TimestampType timestampType && toType instanceof VarcharType varcharType) {
+            if (timestampType.isShort()) {
+                return Optional.of(new ShortTimestampToVarcharCoercer(timestampType, varcharType));
+            }
+            return Optional.of(new LongTimestampToVarcharCoercer(timestampType, varcharType));
         }
-        if (isMapType(fromType) && isMapType(toType)) {
-            return Optional.of(new MapCoercer(typeManager, fromHiveType, toHiveType));
+        if ((fromType instanceof ArrayType) && (toType instanceof ArrayType)) {
+            return Optional.of(new ListCoercer(typeManager, fromHiveType, toHiveType, timestampPrecision));
         }
-        if (isRowType(fromType) && isRowType(toType)) {
-            HiveType fromHiveTypeStruct = (fromHiveType.getCategory() == ObjectInspector.Category.UNION) ? HiveType.toHiveType(fromType) : fromHiveType;
-            HiveType toHiveTypeStruct = (toHiveType.getCategory() == ObjectInspector.Category.UNION) ? HiveType.toHiveType(toType) : toHiveType;
+        if ((fromType instanceof MapType) && (toType instanceof MapType)) {
+            return Optional.of(new MapCoercer(typeManager, fromHiveType, toHiveType, timestampPrecision));
+        }
+        if ((fromType instanceof RowType) && (toType instanceof RowType)) {
+            HiveType fromHiveTypeStruct = (fromHiveType.getCategory() == Category.UNION) ? HiveType.toHiveType(fromType) : fromHiveType;
+            HiveType toHiveTypeStruct = (toHiveType.getCategory() == Category.UNION) ? HiveType.toHiveType(toType) : toHiveType;
 
-            return Optional.of(new StructCoercer(typeManager, fromHiveTypeStruct, toHiveTypeStruct));
+            return Optional.of(new StructCoercer(typeManager, fromHiveTypeStruct, toHiveTypeStruct, timestampPrecision));
         }
 
         throw new TrinoException(NOT_SUPPORTED, format("Unsupported coercion from %s to %s", fromHiveType, toHiveType));
@@ -373,19 +391,27 @@ public class HivePageSource
         return first.getBoundedLength() < second.getBoundedLength();
     }
 
+    public static boolean narrowerThan(CharType first, CharType second)
+    {
+        requireNonNull(first, "first is null");
+        requireNonNull(second, "second is null");
+        return first.getLength() < second.getLength();
+    }
+
     private static class ListCoercer
             implements Function<Block, Block>
     {
         private final Optional<Function<Block, Block>> elementCoercer;
 
-        public ListCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType)
+        public ListCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision timestampPrecision)
         {
             requireNonNull(typeManager, "typeManager is null");
             requireNonNull(fromHiveType, "fromHiveType is null");
             requireNonNull(toHiveType, "toHiveType is null");
+            requireNonNull(timestampPrecision, "timestampPrecision is null");
             HiveType fromElementHiveType = HiveType.valueOf(((ListTypeInfo) fromHiveType.getTypeInfo()).getListElementTypeInfo().getTypeName());
             HiveType toElementHiveType = HiveType.valueOf(((ListTypeInfo) toHiveType.getTypeInfo()).getListElementTypeInfo().getTypeName());
-            this.elementCoercer = createCoercer(typeManager, fromElementHiveType, toElementHiveType);
+            this.elementCoercer = createCoercer(typeManager, fromElementHiveType, toElementHiveType, timestampPrecision);
         }
 
         @Override
@@ -413,17 +439,18 @@ public class HivePageSource
         private final Optional<Function<Block, Block>> keyCoercer;
         private final Optional<Function<Block, Block>> valueCoercer;
 
-        public MapCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType)
+        public MapCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision timestampPrecision)
         {
             requireNonNull(typeManager, "typeManager is null");
             requireNonNull(fromHiveType, "fromHiveType is null");
+            requireNonNull(timestampPrecision, "timestampPrecision is null");
             this.toType = toHiveType.getType(typeManager);
             HiveType fromKeyHiveType = HiveType.valueOf(((MapTypeInfo) fromHiveType.getTypeInfo()).getMapKeyTypeInfo().getTypeName());
             HiveType fromValueHiveType = HiveType.valueOf(((MapTypeInfo) fromHiveType.getTypeInfo()).getMapValueTypeInfo().getTypeName());
             HiveType toKeyHiveType = HiveType.valueOf(((MapTypeInfo) toHiveType.getTypeInfo()).getMapKeyTypeInfo().getTypeName());
             HiveType toValueHiveType = HiveType.valueOf(((MapTypeInfo) toHiveType.getTypeInfo()).getMapValueTypeInfo().getTypeName());
-            this.keyCoercer = createCoercer(typeManager, fromKeyHiveType, toKeyHiveType);
-            this.valueCoercer = createCoercer(typeManager, fromValueHiveType, toValueHiveType);
+            this.keyCoercer = createCoercer(typeManager, fromKeyHiveType, toKeyHiveType, timestampPrecision);
+            this.valueCoercer = createCoercer(typeManager, fromValueHiveType, toValueHiveType, timestampPrecision);
         }
 
         @Override
@@ -448,11 +475,12 @@ public class HivePageSource
         private final List<Optional<Function<Block, Block>>> coercers;
         private final Block[] nullBlocks;
 
-        public StructCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType)
+        public StructCoercer(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision timestampPrecision)
         {
             requireNonNull(typeManager, "typeManager is null");
             requireNonNull(fromHiveType, "fromHiveType is null");
             requireNonNull(toHiveType, "toHiveType is null");
+            requireNonNull(timestampPrecision, "timestampPrecision is null");
             List<HiveType> fromFieldTypes = extractStructFieldTypes(fromHiveType);
             List<HiveType> toFieldTypes = extractStructFieldTypes(toHiveType);
             ImmutableList.Builder<Optional<Function<Block, Block>>> coercers = ImmutableList.builder();
@@ -463,7 +491,7 @@ public class HivePageSource
                     coercers.add(Optional.empty());
                 }
                 else {
-                    coercers.add(createCoercer(typeManager, fromFieldTypes.get(i), toFieldTypes.get(i)));
+                    coercers.add(createCoercer(typeManager, fromFieldTypes.get(i), toFieldTypes.get(i), timestampPrecision));
                 }
             }
             this.coercers = coercers.build();
@@ -576,7 +604,7 @@ public class HivePageSource
         // validate every ~100 rows but using a prime number
         public static final int VALIDATION_STRIDE = 97;
 
-        private final Path path;
+        private final Location path;
         private final int[] bucketColumnIndices;
         private final List<TypeInfo> bucketColumnTypes;
         private final BucketingVersion bucketingVersion;
@@ -584,7 +612,7 @@ public class HivePageSource
         private final int expectedBucket;
 
         public BucketValidator(
-                Path path,
+                Location path,
                 int[] bucketColumnIndices,
                 List<TypeInfo> bucketColumnTypes,
                 BucketingVersion bucketingVersion,

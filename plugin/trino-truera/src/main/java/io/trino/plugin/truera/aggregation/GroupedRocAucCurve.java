@@ -1,0 +1,150 @@
+package io.trino.plugin.truera.aggregation;
+
+import io.airlift.log.Logger;
+import java.util.ArrayList;
+import java.util.List;
+
+
+import io.trino.array.BooleanBigArray;
+import io.trino.array.IntBigArray;
+import io.trino.array.LongBigArray;
+import io.trino.array.DoubleBigArray;
+
+import io.trino.spi.block.Block;
+import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.type.BooleanType;
+import io.trino.spi.type.DoubleType;
+import org.openjdk.jol.info.ClassLayout;
+
+import static io.trino.plugin.truera.AreaUnderRocCurveAlgorithm.computeRocAuc;
+import static java.util.Objects.requireNonNull;
+
+public class GroupedRocAucCurve {
+    private static final Logger log = Logger.get(GroupedRocAucCurve.class);
+
+    private static final long INSTANCE_SIZE = ClassLayout.parseClass(GroupedRocAucCurve.class).instanceSize();
+    private static final int NULL = -1;
+
+    // one entry per group
+    // each entry is the index of the first elements of the group in the labels/scores/nextLinks arrays
+    private final LongBigArray headIndices;
+
+    // one entry per double/boolean pair
+    private final BooleanBigArray labels;
+    private final DoubleBigArray scores;
+
+    // the value in nextLinks contains the index of the next value in the chain
+    // a value NULL (-1) indicates it is the last value for the group
+    private final IntBigArray nextLinks;
+
+    // the index of the next free element in the labels/scores/nextLinks arrays
+    // this is needed to be able to know where to continue adding elements when after the arrays are resized
+    private int nextFreeIndex;
+
+    private long currentGroupId = -1;
+
+    public GroupedRocAucCurve() {
+        this.headIndices = new LongBigArray(NULL);
+        this.labels = new BooleanBigArray();
+        this.scores = new DoubleBigArray();
+        this.nextLinks = new IntBigArray(NULL);
+        this.nextFreeIndex = 0;
+    }
+
+    public GroupedRocAucCurve(long groupId, Block serialized) {
+        this();
+        this.currentGroupId = groupId;
+
+        requireNonNull(serialized, "serialized block is null");
+        for (int i = 0; i < serialized.getPositionCount(); i++) {
+            Block entryBlock = serialized.getObject(i, Block.class);
+            add(entryBlock, entryBlock, 0, 1);
+        }
+    }
+
+    public void serialize(BlockBuilder out) {
+        if (isCurrentGroupEmpty()) {
+            out.appendNull();
+            return;
+        }
+
+        // retrieve scores + labels
+        List<Boolean> labelList = new ArrayList<>();
+        List<Double> scoreList = new ArrayList<>();
+
+        int currentIndex = (int) headIndices.get(currentGroupId);
+        while (currentIndex != NULL) {
+            labelList.add(labels.get(currentIndex));
+            scoreList.add(scores.get(currentIndex));
+            currentIndex = nextLinks.get(currentIndex);
+        }
+
+        // convert lists to primitive arrays
+        boolean[] labels = new boolean[labelList.size()];
+        for (int i = 0; i < labels.length; i++) {
+            labels[i] = labelList.get(i);
+        }
+        double[] scores = scoreList.stream().mapToDouble(Double::doubleValue).toArray();
+        log.info("cow2");
+        log.info("compute", labels.toString(), scores.toString());
+
+        // compute + return
+        double auc = computeRocAuc(labels, scores);
+        if (Double.isNaN(auc)) {
+            out.appendNull();
+        } else {
+            DoubleType.DOUBLE.writeDouble(out, auc);
+        }
+    }
+
+    public long estimatedInMemorySize() {
+        return INSTANCE_SIZE + labels.sizeOf() + scores.sizeOf() + nextLinks.sizeOf() + headIndices.sizeOf();
+    }
+
+    public GroupedRocAucCurve setGroupId(long groupId) {
+        this.currentGroupId = groupId;
+        return this;
+    }
+
+    public long getGroupId() {
+        return this.currentGroupId;
+    }
+
+    public void add(Block labelsBlock, Block scoresBlock, int labelPosition, int scorePosition) {
+        ensureCapacity(currentGroupId + 1);
+
+        labels.set(nextFreeIndex, BooleanType.BOOLEAN.getBoolean(labelsBlock, labelPosition));
+        scores.set(nextFreeIndex, DoubleType.DOUBLE.getDouble(scoresBlock, scorePosition));
+        nextLinks.set(nextFreeIndex, (int) headIndices.get(currentGroupId));
+        nextFreeIndex++;
+    }
+
+    public void ensureCapacity(long numberOfGroups) {
+        headIndices.ensureCapacity(numberOfGroups);
+        int numberOfValues = nextFreeIndex + 1;
+        labels.ensureCapacity(numberOfValues);
+        scores.ensureCapacity(numberOfValues);
+        nextLinks.ensureCapacity(numberOfValues);
+    }
+
+    public void addAll(GroupedRocAucCurve other) {
+        other.readAll(this);
+    }
+
+    public void readAll(GroupedRocAucCurve to) {
+        int currentIndex = (int) headIndices.get(currentGroupId);
+        while (currentIndex != NULL) {
+            BlockBuilder labelBlockBuilder = BooleanType.BOOLEAN.createBlockBuilder(null, 0);
+            BooleanType.BOOLEAN.writeBoolean(labelBlockBuilder, labels.get(currentIndex));
+            BlockBuilder scoreBlockBuilder = DoubleType.DOUBLE.createBlockBuilder(null, 0);
+            DoubleType.DOUBLE.writeDouble(scoreBlockBuilder, scores.get(currentIndex));
+
+            to.add(labelBlockBuilder.build(), scoreBlockBuilder.build(), 0, 0);
+            currentIndex = nextLinks.get(currentIndex);
+        }
+    }
+
+    public boolean isCurrentGroupEmpty() {
+        return headIndices.get(currentGroupId) == NULL;
+    }
+}

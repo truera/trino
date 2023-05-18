@@ -18,8 +18,9 @@ import com.google.common.collect.ImmutableMap;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
+import io.trino.filesystem.Location;
 import io.trino.filesystem.memory.MemoryInputFile;
-import io.trino.hive.formats.rcfile.binary.BinaryRcFileEncoding;
+import io.trino.hive.formats.encodings.binary.BinaryColumnEncodingFactory;
 import io.trino.spi.block.Block;
 import org.joda.time.DateTimeZone;
 import org.testng.annotations.Test;
@@ -235,8 +236,8 @@ public class TestRcFileReaderManual
         }
 
         RcFileReader reader = new RcFileReader(
-                new MemoryInputFile("test", data),
-                new BinaryRcFileEncoding(DateTimeZone.UTC),
+                new MemoryInputFile(Location.of("memory:///test"), data),
+                new BinaryColumnEncodingFactory(DateTimeZone.UTC),
                 ImmutableMap.of(0, SMALLINT),
                 offset,
                 length);
@@ -245,7 +246,7 @@ public class TestRcFileReaderManual
         while (reader.advance() >= 0) {
             Block block = reader.readBlock(0);
             for (int position = 0; position < block.getPositionCount(); position++) {
-                values.add((int) SMALLINT.getLong(block, position));
+                values.add((int) SMALLINT.getShort(block, position));
             }
         }
 
