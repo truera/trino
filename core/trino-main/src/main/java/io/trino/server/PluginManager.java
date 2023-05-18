@@ -65,12 +65,15 @@ import static java.util.Objects.requireNonNull;
 
 @ThreadSafe
 public class PluginManager
+        implements PluginInstaller
 {
     private static final ImmutableList<String> SPI_PACKAGES = ImmutableList.<String>builder()
             .add("io.trino.spi.")
             .add("com.fasterxml.jackson.annotation.")
             .add("io.airlift.slice.")
             .add("org.openjdk.jol.")
+            .add("io.opentelemetry.api.")
+            .add("io.opentelemetry.context.")
             .build();
 
     private static final Logger log = Logger.get(PluginManager.class);
@@ -91,7 +94,6 @@ public class PluginManager
     private final BlockEncodingManager blockEncodingManager;
     private final HandleResolver handleResolver;
     private final AtomicBoolean pluginsLoading = new AtomicBoolean();
-    private final Set<PluginInstaller> pluginInstallers;
 
     @Inject
     public PluginManager(
@@ -109,8 +111,7 @@ public class PluginManager
             TypeRegistry typeRegistry,
             BlockEncodingManager blockEncodingManager,
             HandleResolver handleResolver,
-            ExchangeManagerRegistry exchangeManagerRegistry,
-            Set<PluginInstaller> pluginInstallers)
+            ExchangeManagerRegistry exchangeManagerRegistry)
     {
         this.pluginsProvider = requireNonNull(pluginsProvider, "pluginsProvider is null");
         this.connectorFactory = requireNonNull(connectorFactory, "connectorFactory is null");
@@ -127,9 +128,9 @@ public class PluginManager
         this.blockEncodingManager = requireNonNull(blockEncodingManager, "blockEncodingManager is null");
         this.handleResolver = requireNonNull(handleResolver, "handleResolver is null");
         this.exchangeManagerRegistry = requireNonNull(exchangeManagerRegistry, "exchangeManagerRegistry is null");
-        this.pluginInstallers = requireNonNull(pluginInstallers, "pluginInstallers is null");
     }
 
+    @Override
     public void loadPlugins()
     {
         if (!pluginsLoading.compareAndSet(false, true)) {
@@ -172,6 +173,7 @@ public class PluginManager
         }
     }
 
+    @Override
     public void installPlugin(Plugin plugin, Function<CatalogHandle, ClassLoader> duplicatePluginClassLoaderFactory)
     {
         installPluginInternal(plugin, duplicatePluginClassLoaderFactory);
@@ -255,10 +257,6 @@ public class PluginManager
         for (ExchangeManagerFactory exchangeManagerFactory : plugin.getExchangeManagerFactories()) {
             log.info("Registering exchange manager %s", exchangeManagerFactory.getName());
             exchangeManagerRegistry.addExchangeManagerFactory(exchangeManagerFactory);
-        }
-
-        for (PluginInstaller pluginInstaller : pluginInstallers) {
-            pluginInstaller.installPlugin(plugin);
         }
     }
 

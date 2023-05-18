@@ -35,6 +35,7 @@ import io.trino.execution.buffer.BufferResult;
 import io.trino.execution.buffer.PipelinedOutputBuffers;
 import io.trino.metadata.SessionPropertyManager;
 import io.trino.server.security.ResourceSecurity;
+import io.trino.spi.connector.CatalogHandle;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
 
@@ -61,6 +62,7 @@ import javax.ws.rs.core.UriInfo;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -149,12 +151,15 @@ public class TaskResource
             return;
         }
 
-        TaskInfo taskInfo = taskManager.updateTask(session,
+        TaskInfo taskInfo = taskManager.updateTask(
+                session,
                 taskId,
+                taskUpdateRequest.getStageSpan(),
                 taskUpdateRequest.getFragment(),
                 taskUpdateRequest.getSplitAssignments(),
                 taskUpdateRequest.getOutputIds(),
-                taskUpdateRequest.getDynamicFilterDomains());
+                taskUpdateRequest.getDynamicFilterDomains(),
+                taskUpdateRequest.isSpeculative());
 
         if (shouldSummarize(uriInfo)) {
             taskInfo = taskInfo.summarize();
@@ -388,6 +393,15 @@ public class TaskResource
         asyncResponse.resume(Response.noContent().build());
     }
 
+    @ResourceSecurity(INTERNAL_ONLY)
+    @POST
+    @Path("pruneCatalogs")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public void pruneCatalogs(Set<CatalogHandle> catalogHandles)
+    {
+        taskManager.pruneCatalogs(catalogHandles);
+    }
+
     private boolean injectFailure(
             Optional<String> traceToken,
             TaskId taskId,
@@ -522,7 +536,7 @@ public class TaskResource
                 .header(TRINO_PAGE_NEXT_TOKEN, result.getNextToken())
                 .header(TRINO_BUFFER_COMPLETE, result.isBufferComplete())
                 // check for task failure after getting the result to ensure it's consistent with isBufferComplete()
-                .header(TRINO_TASK_FAILED, taskWithResults.isTaskFailed())
+                .header(TRINO_TASK_FAILED, taskWithResults.isTaskFailedOrFailing())
                 .build();
     }
 }

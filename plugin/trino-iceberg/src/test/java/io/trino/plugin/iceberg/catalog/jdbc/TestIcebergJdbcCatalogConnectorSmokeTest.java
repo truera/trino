@@ -14,6 +14,7 @@
 package io.trino.plugin.iceberg.catalog.jdbc;
 
 import com.google.common.collect.ImmutableMap;
+import io.trino.filesystem.Location;
 import io.trino.hadoop.ConfigurationInstantiator;
 import io.trino.plugin.iceberg.BaseIcebergConnectorSmokeTest;
 import io.trino.plugin.iceberg.IcebergConfig;
@@ -33,6 +34,8 @@ import java.nio.file.Path;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
+import static io.trino.plugin.hive.HiveTestUtils.HDFS_FILE_SYSTEM_FACTORY;
+import static io.trino.plugin.iceberg.IcebergTestUtils.checkOrcFileSorting;
 import static io.trino.plugin.iceberg.catalog.jdbc.TestingIcebergJdbcServer.PASSWORD;
 import static io.trino.plugin.iceberg.catalog.jdbc.TestingIcebergJdbcServer.USER;
 import static java.lang.String.format;
@@ -86,11 +89,13 @@ public class TestIcebergJdbcCatalogConnectorSmokeTest
                         ImmutableMap.<String, String>builder()
                                 .put("iceberg.file-format", format.name())
                                 .put("iceberg.catalog.type", "jdbc")
+                                .put("iceberg.jdbc-catalog.driver-class", "org.postgresql.Driver")
                                 .put("iceberg.jdbc-catalog.connection-url", server.getJdbcUrl())
                                 .put("iceberg.jdbc-catalog.connection-user", USER)
                                 .put("iceberg.jdbc-catalog.connection-password", PASSWORD)
                                 .put("iceberg.jdbc-catalog.catalog-name", "tpch")
                                 .put("iceberg.register-table-procedure.enabled", "true")
+                                .put("iceberg.writer-sort-buffer-size", "1MB")
                                 .put("iceberg.jdbc-catalog.default-warehouse-dir", warehouseLocation.getAbsolutePath())
                                 .buildOrThrow())
                 .setInitialTables(REQUIRED_TPCH_TABLES)
@@ -164,5 +169,11 @@ public class TestIcebergJdbcCatalogConnectorSmokeTest
         catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    @Override
+    protected boolean isFileSorted(Location path, String sortColumnName)
+    {
+        return checkOrcFileSorting(HDFS_FILE_SYSTEM_FACTORY, path, sortColumnName);
     }
 }

@@ -25,7 +25,6 @@ import io.trino.testing.MaterializedResult;
 import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
 import io.trino.testing.TestingConnectorBehavior;
-import io.trino.testing.assertions.Assert;
 import io.trino.testing.sql.TestTable;
 import org.intellij.lang.annotations.Language;
 import org.testng.SkipException;
@@ -92,6 +91,14 @@ public class TestCassandraConnectorTest
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
         switch (connectorBehavior) {
+            case SUPPORTS_UPDATE:
+            case SUPPORTS_MERGE:
+                return false;
+
+            case SUPPORTS_DELETE:
+            case SUPPORTS_TRUNCATE:
+                return true;
+
             case SUPPORTS_TOPN_PUSHDOWN:
                 return false;
 
@@ -113,14 +120,11 @@ public class TestCassandraConnectorTest
                 return false;
 
             case SUPPORTS_CREATE_VIEW:
+            case SUPPORTS_CREATE_MATERIALIZED_VIEW:
                 return false;
 
             case SUPPORTS_NOT_NULL_CONSTRAINT:
                 return false;
-
-            case SUPPORTS_DELETE:
-            case SUPPORTS_TRUNCATE:
-                return true;
 
             case SUPPORTS_ARRAY:
             case SUPPORTS_ROW_TYPE:
@@ -195,28 +199,13 @@ public class TestCassandraConnectorTest
     @Override
     public void testShowColumns()
     {
-        MaterializedResult actual = computeActual("SHOW COLUMNS FROM orders");
-
-        MaterializedResult expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
-                .row("orderkey", "bigint", "", "")
-                .row("custkey", "bigint", "", "")
-                .row("orderstatus", "varchar", "", "")
-                .row("totalprice", "double", "", "")
-                .row("orderdate", "date", "", "")
-                .row("orderpriority", "varchar", "", "")
-                .row("clerk", "varchar", "", "")
-                .row("shippriority", "integer", "", "")
-                .row("comment", "varchar", "", "")
-                .build();
-
-        Assert.assertEquals(actual, expectedParametrizedVarchar);
+        assertThat(query("SHOW COLUMNS FROM orders")).matches(getDescribeOrdersResult());
     }
 
-    @Test
     @Override
-    public void testDescribeTable()
+    protected MaterializedResult getDescribeOrdersResult()
     {
-        MaterializedResult expectedColumns = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
+        return resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
                 .row("orderkey", "bigint", "", "")
                 .row("custkey", "bigint", "", "")
                 .row("orderstatus", "varchar", "", "")
@@ -227,8 +216,6 @@ public class TestCassandraConnectorTest
                 .row("shippriority", "integer", "", "")
                 .row("comment", "varchar", "", "")
                 .build();
-        MaterializedResult actualColumns = computeActual("DESCRIBE orders");
-        Assert.assertEquals(actualColumns, expectedColumns);
     }
 
     @Test
@@ -283,6 +270,7 @@ public class TestCassandraConnectorTest
                         partitionColumn("typelong", "bigint"),
                         generalColumn("typebytes", "blob"),
                         partitionColumn("typedate", "date"),
+                        partitionColumn("typetime", "time"),
                         partitionColumn("typetimestamp", "timestamp"),
                         partitionColumn("typeansi", "ascii"),
                         partitionColumn("typeboolean", "boolean"),
@@ -305,6 +293,7 @@ public class TestCassandraConnectorTest
                         "1007, " +
                         "0x00000007, " +
                         "'1970-01-01', " +
+                        "'03:04:05.123456789', " +
                         "'1970-01-01 03:04:05.000+0000', " +
                         "'ansi 7', " +
                         "false, " +
@@ -327,6 +316,7 @@ public class TestCassandraConnectorTest
                     " AND typeinteger = 7" +
                     " AND typelong = 1007" +
                     " AND typedate = DATE '1970-01-01'" +
+                    " AND typetime = TIME '03:04:05.123456789'" +
                     " AND typetimestamp = TIMESTAMP '1970-01-01 03:04:05Z'" +
                     " AND typeansi = 'ansi 7'" +
                     " AND typeboolean = false" +
@@ -934,7 +924,7 @@ public class TestCassandraConnectorTest
         // There is no way to figure out what the exactly keyspace we want to retrieve tables from
         assertQueryFailsEventually(
                 "SHOW TABLES FROM cassandra.keyspace_3",
-                "More than one keyspace has been found for the case insensitive schema name: keyspace_3 -> \\(KeYsPaCe_3, kEySpAcE_3\\)",
+                "Error listing tables for catalog cassandra: More than one keyspace has been found for the case insensitive schema name: keyspace_3 -> \\(KeYsPaCe_3, kEySpAcE_3\\)",
                 new Duration(1, MINUTES));
 
         session.execute("DROP KEYSPACE \"KeYsPaCe_3\"");
@@ -1406,31 +1396,55 @@ public class TestCassandraConnectorTest
     }
 
     @Test
+    public void testNativeQueryColumnAlias()
+    {
+        assertThat(query("SELECT region_name FROM TABLE(system.query(query => 'SELECT name AS region_name FROM tpch.region WHERE regionkey = 0 ALLOW FILTERING'))"))
+                .matches("VALUES CAST('AFRICA' AS VARCHAR)");
+    }
+
+    @Test
+    public void testNativeQueryColumnAliasNotFound()
+    {
+        assertQueryFails(
+                "SELECT name FROM TABLE(system.query(query => 'SELECT name AS region_name FROM tpch.region'))",
+                ".* Column 'name' cannot be resolved");
+        assertQueryFails(
+                "SELECT column_not_found FROM TABLE(system.query(query => 'SELECT name AS region_name FROM tpch.region'))",
+                ".* Column 'column_not_found' cannot be resolved");
+    }
+
+    @Test
     public void testNativeQuerySelectFromTestTable()
     {
-        String tableName = "tpch.test_select" + randomNameSuffix();
-        onCassandra("CREATE TABLE " + tableName + "(col BIGINT PRIMARY KEY)");
+        String tableName = "test_select" + randomNameSuffix();
+        onCassandra("CREATE TABLE tpch." + tableName + "(col BIGINT PRIMARY KEY)");
+        onCassandra("INSERT INTO tpch." + tableName + "(col) VALUES (1)");
+        assertContainsEventually(() -> execute("SHOW TABLES FROM cassandra.tpch"), resultBuilder(getSession(), createUnboundedVarcharType())
+                .row(tableName)
+                .build(), new Duration(1, MINUTES));
 
-        onCassandra("INSERT INTO " + tableName + "(col) VALUES (1)");
         assertQuery(
-                "SELECT * FROM TABLE(cassandra.system.query(query => 'SELECT * FROM " + tableName + "'))",
+                "SELECT * FROM TABLE(cassandra.system.query(query => 'SELECT * FROM tpch." + tableName + "'))",
                 "VALUES 1");
 
-        onCassandra("DROP TABLE " + tableName);
+        onCassandra("DROP TABLE tpch." + tableName);
     }
 
     @Test
     public void testNativeQueryCaseSensitivity()
     {
-        String tableName = "tpch.test_case" + randomNameSuffix();
-        onCassandra("CREATE TABLE " + tableName + "(col_case BIGINT PRIMARY KEY, \"COL_CASE\" BIGINT)");
+        String tableName = "test_case" + randomNameSuffix();
+        onCassandra("CREATE TABLE tpch." + tableName + "(col_case BIGINT PRIMARY KEY, \"COL_CASE\" BIGINT)");
+        onCassandra("INSERT INTO tpch." + tableName + "(col_case, \"COL_CASE\") VALUES (1, 2)");
+        assertContainsEventually(() -> execute("SHOW TABLES FROM cassandra.tpch"), resultBuilder(getSession(), createUnboundedVarcharType())
+                .row(tableName)
+                .build(), new Duration(1, MINUTES));
 
-        onCassandra("INSERT INTO " + tableName + "(col_case, \"COL_CASE\") VALUES (1, 2)");
         assertQuery(
-                "SELECT * FROM TABLE(cassandra.system.query(query => 'SELECT * FROM " + tableName + "'))",
+                "SELECT * FROM TABLE(cassandra.system.query(query => 'SELECT * FROM tpch." + tableName + "'))",
                 "VALUES (1, 2)");
 
-        onCassandra("DROP TABLE " + tableName);
+        onCassandra("DROP TABLE tpch." + tableName);
     }
 
     @Test
@@ -1458,6 +1472,9 @@ public class TestCassandraConnectorTest
         String tableName = "test_unsupported_statement" + randomNameSuffix();
         onCassandra("CREATE TABLE tpch." + tableName + "(col INT PRIMARY KEY)");
         onCassandra("INSERT INTO tpch." + tableName + "(col) VALUES (1)");
+        assertContainsEventually(() -> execute("SHOW TABLES FROM cassandra.tpch"), resultBuilder(getSession(), createUnboundedVarcharType())
+                .row(tableName)
+                .build(), new Duration(1, MINUTES));
 
         assertThatThrownBy(() -> query("SELECT * FROM TABLE(cassandra.system.query(query => 'INSERT INTO tpch." + tableName + "(col) VALUES (3)'))"))
                 .hasMessage("Handle doesn't have columns info");
@@ -1465,18 +1482,6 @@ public class TestCassandraConnectorTest
                 .hasMessage("Handle doesn't have columns info");
 
         assertQuery("SELECT * FROM " + tableName, "VALUES 1");
-
-        onCassandra("DROP TABLE IF EXISTS tpch." + tableName);
-    }
-
-    @Test
-    public void testNativeQueryUnsupportedType()
-    {
-        String tableName = "test_unsupported_type" + randomNameSuffix();
-        onCassandra("CREATE TABLE tpch." + tableName + "(col TIME PRIMARY KEY)");
-
-        assertThatThrownBy(() -> query("SELECT * FROM TABLE(cassandra.system.query(query => 'SELECT * FROM tpch." + tableName + "'))"))
-                .hasMessage("Unsupported type: TIME");
 
         onCassandra("DROP TABLE IF EXISTS tpch." + tableName);
     }
@@ -1586,7 +1591,7 @@ public class TestCassandraConnectorTest
         }
     }
 
-    private MaterializedResult execute(String sql)
+    private MaterializedResult execute(@Language("SQL") String sql)
     {
         return getQueryRunner().execute(SESSION, sql);
     }
