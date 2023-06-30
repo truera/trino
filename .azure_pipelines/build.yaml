@@ -46,11 +46,17 @@ stages:
                     mavenAuthenticateFeed: false
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
+              - bash: |
+                      set -e
+                      cp "plugin/trino-truera/target/trino-truera-${TRUERA_TRINO_PLUGIN_VERSION}.zip" "${PUBLISH_DIRECTORY}"
+                env:
+                      TRUERA_TRINO_PLUGIN_VERSION: ${{ parameters.trinoVersion }}
+                      PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)
               - task: UniversalPackages@0
                 inputs:
                   command: publish
-                  publishDirectory: 'plugin/trino-truera/target'
+                  publishDirectory: '$(Build.ArtifactStagingDirectory)'
                   vstsFeedPublish: 'truera/trino-plugin'
-                  vstsFeedPackagePublish: 'Trino plugin'
+                  vstsFeedPackagePublish: 'trino-plugin'
                   packagePublishDescription: 'Trino plugin description'
                 displayName: "Publish universal package"
