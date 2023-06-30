@@ -32,7 +32,7 @@ stages:
                       tar xvf apache-maven-3.9.3-bin.tar.gz
                       mkdir /tmp/maven_3_9_3
                       cd /tmp/maven_3_9_3
-                      sudo cp /tmp/apache-maven-3.9.3/* .
+                      sudo cp -r /tmp/apache-maven-3.9.3/* .
               - task: Maven@3
                 inputs:
                     mavenPomFile: "plugin/trino-truera/pom.xml"
