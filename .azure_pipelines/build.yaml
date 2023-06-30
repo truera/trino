@@ -53,6 +53,7 @@ stages:
                   scriptLocation: inlineScript
                   inlineScript: |
                     az extension add --name azure-devops
+                    az devops login --organization https://dev.azure.com/ailens-io/
                     az artifacts universal publish \
                         --organization https://dev.azure.com/ailens-io/ \
                         --project="truera" \
