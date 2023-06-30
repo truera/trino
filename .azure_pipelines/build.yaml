@@ -27,7 +27,7 @@ stages:
                 displayName: "Check maven version"
               - task: Maven@3
                 inputs:
-                    mavenPomFile: "pom.xml"
+                    mavenPomFile: "plugin/trino-truera/pom.xml"
                     goals: clean install
                     options: -DskipTests -Dair.check.skip-all=true
                     publishJUnitResults: false
