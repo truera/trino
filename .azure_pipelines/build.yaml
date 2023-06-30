@@ -24,6 +24,7 @@ stages:
                     set -e
                     sudo apt-get update
                     sudo apt-get install diff
+                displayName: Install diff
               - task: Maven@3
                 inputs:
                     mavenPomFile: "pom.xml"
@@ -37,6 +38,7 @@ stages:
                     mavenAuthenticateFeed: true
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
+                displayName: Maven build
               - bash: |
                     set -e
                     az artifacts universal publish
@@ -48,3 +50,4 @@ stages:
                         --version 0.0.1
                         --description "Trino plugin"
                         --path plugin/trino/truera/trino-truera-${{ parameters.trinoVersion }}-SNAPSHOT.zip
+                displayName: Publish to Azure
