@@ -22,6 +22,10 @@ stages:
               - bash: |
                     which java; java --version
                 displayName: "Check java version"
+              - script: |
+                      echo "##vso[task.setvariable variable=JAVA_HOME]$(JAVA_HOME_11_X64)"
+                      echo "##vso[task.setvariable variable=PATH]$(JAVA_HOME_11_X64)/bin:$(PATH)"
+                displayName: "Set java version"
               - task: Maven@3
                 inputs:
                     mavenPomFile: "pom.xml"
