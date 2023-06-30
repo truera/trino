@@ -53,7 +53,6 @@ stages:
                   scriptLocation: inlineScript
                   inlineScript: |
                     az extension add --name azure-devops
-                    az devops login --organization https://dev.azure.com/ailens-io/
                     az artifacts universal publish \
                         --organization https://dev.azure.com/ailens-io/ \
                         --project="truera" \
@@ -63,4 +62,6 @@ stages:
                         --version 0.0.1 \
                         --description "Trino plugin" \
                         --path plugin/trino/truera/trino-truera-${{ parameters.trinoVersion }}-SNAPSHOT.zip
+                env:
+                  AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
                 displayName: "Upload artifact"
