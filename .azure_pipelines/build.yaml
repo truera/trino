@@ -10,7 +10,6 @@ parameters:
       type: string
       default: "406"
 
-container: maven:3.8.1-openjdk-17
 
 stages:
     - stage: build_code_and_publish_artifact
@@ -19,6 +18,7 @@ stages:
         - job: build_code_and_publish_artifact_job
           pool:
               name: AWS-2XL
+          container: maven:3.8.1-openjdk-17
           steps:
               - task: Maven@3
                 inputs:
