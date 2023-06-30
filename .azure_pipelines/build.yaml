@@ -22,8 +22,8 @@ stages:
           steps:
               - bash: |
                     set -e
-                    sudo apt-get update
-                    sudo apt-get install diff
+                    apt-get update
+                    apt-get install diff
                 displayName: Install diff
               - task: Maven@3
                 inputs:
