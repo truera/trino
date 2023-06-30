@@ -46,22 +46,11 @@ stages:
                     mavenAuthenticateFeed: false
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
-              - task: AzureCLI@2
+              - task: UniversalPackages@0
                 inputs:
-                  azureSubscription: TRUERA_DEV (2b69c6c7-63d8-4577-8f83-b2e2d5594b63)
-                  scriptType: bash
-                  scriptLocation: inlineScript
-                  inlineScript: |
-                    az extension add --name azure-devops
-                    az artifacts universal publish \
-                        --organization https://dev.azure.com/ailens-io/ \
-                        --project="truera" \
-                        --scope project \
-                        --feed trino-plugin \
-                        --name ${{ parameters.artifactName }} \
-                        --version 0.0.1 \
-                        --description "Trino plugin" \
-                        --path plugin/trino/truera/trino-truera-${{ parameters.trinoVersion }}-SNAPSHOT.zip
-                env:
-                  AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
-                displayName: "Upload artifact"
+                  command: publish
+                  publishDirectory: 'plugin/trino-truera/target'
+                  vstsFeedPublish: 'truera/trino-plugin'
+                  vstsFeedPackagePublish: 'Trino plugin'
+                  packagePublishDescription: 'Trino plugin description'
+                displayName: "Publish universal package"
