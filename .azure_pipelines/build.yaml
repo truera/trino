@@ -47,13 +47,13 @@ stages:
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
               - bash: |
-                    az artifacts universal publish
-                        --organization https://dev.azure.com/ailens-io/
-                        --project="truera"
-                        --scope project
-                        --feed trino-plugin
-                        --name ${{ parameters.artifactName }}
-                        --version 0.0.1
-                        --description "Trino plugin"
+                    az artifacts universal publish \
+                        --organization https://dev.azure.com/ailens-io/ \
+                        --project="truera" \
+                        --scope project \
+                        --feed trino-plugin \
+                        --name ${{ parameters.artifactName }} \
+                        --version 0.0.1 \
+                        --description "Trino plugin" \
                         --path plugin/trino/truera/trino-truera-${{ parameters.trinoVersion }}-SNAPSHOT.zip
                 displayName: "Upload artifact"
