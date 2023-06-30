@@ -21,7 +21,7 @@ stages:
           steps:
               - task: JavaToolInstaller@0
                 inputs:
-                    versionSpec: '8'
+                    versionSpec: '17'
                     jdkArchitectureOption: 'x64'
                     jdkSourceOption: 'PreInstalled'
               - task: Maven@3
