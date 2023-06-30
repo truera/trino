@@ -52,6 +52,7 @@ stages:
                 env:
                       TRUERA_TRINO_PLUGIN_VERSION: ${{ parameters.trinoVersion }}
                       PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)
+                displayName: "Copy zip file to separate folder"
               - task: UniversalPackages@0
                 inputs:
                   command: publish
