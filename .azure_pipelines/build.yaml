@@ -22,6 +22,9 @@ stages:
               - bash: |
                     which java; java --version
                 displayName: "Check java version"
+              - bash: |
+                      mvn -version
+                displayName: "Check maven version"
               - task: Maven@3
                 inputs:
                     mavenPomFile: "pom.xml"
