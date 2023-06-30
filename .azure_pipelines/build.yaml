@@ -46,7 +46,12 @@ stages:
                     mavenAuthenticateFeed: false
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
-              - bash: |
+              - task: AzureCLI@2
+                inputs:
+                  azureSubscription: TRUERA_DEV (2b69c6c7-63d8-4577-8f83-b2e2d5594b63)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
                     az artifacts universal publish \
                         --organization https://dev.azure.com/ailens-io/ \
                         --project="truera" \
