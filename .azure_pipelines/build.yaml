@@ -26,7 +26,7 @@ stages:
                 inputs:
                     mavenPomFile: "pom.xml"
                     goals: clean package
-                    options: -DskipTests -Dair.check.skip-all=true --add-opens java.base/java.lang=ALL-UNNAMED
+                    options: -DskipTests -Dair.check.skip-all=true
                     publishJUnitResults: false
                     javaHomeOption: "JDKVersion"
                     jdkVersionOption: "1.17"
