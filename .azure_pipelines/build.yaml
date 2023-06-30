@@ -20,6 +20,10 @@ stages:
               name: AWS-2XL
           container: maven:3.8.1-openjdk-17
           steps:
+              - bash: |
+                    set -e
+                    sudo apt-get update
+                    sudo apt-get install diff
               - task: Maven@3
                 inputs:
                     mavenPomFile: "pom.xml"
@@ -34,6 +38,7 @@ stages:
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
               - bash: |
+                    set -e
                     az artifacts universal publish
                         --organization https://dev.azure.com/ailens-io/
                         --project="truera"
