@@ -10,6 +10,7 @@ parameters:
       type: string
       default: "406"
 
+container: maven:3.8.1-openjdk-17
 
 stages:
     - stage: build_code_and_publish_artifact
@@ -19,21 +20,17 @@ stages:
           pool:
               name: AWS-2XL
           steps:
-              - task: JavaToolInstaller@0
-                inputs:
-                    versionSpec: '17'
-                    jdkArchitectureOption: 'x64'
-                    jdkSourceOption: 'PreInstalled'
               - task: Maven@3
                 inputs:
                     mavenPomFile: "pom.xml"
                     goals: clean package
                     options: -DskipTests -Dair.check.skip-all=true
                     publishJUnitResults: false
-                    javaHomeOption: "JDKVersion"
+                    javaHomeOption: 'path'
+                    jdkDirectory: '/usr/java/openjdk-17'
                     jdkVersionOption: "17"
                     mavenVersionOption: "Default"
-                    mavenAuthenticateFeed: false
+                    mavenAuthenticateFeed: true
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
               - bash: |
