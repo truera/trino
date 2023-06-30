@@ -29,7 +29,7 @@ stages:
                 inputs:
                     mavenPomFile: "plugin/trino-truera/pom.xml"
                     goals: clean install
-                    options: -DskipTests -Dair.check.skip-all=true
+                    options: -DskipTests -Dair.check.skip-all=true -X
                     publishJUnitResults: false
                     javaHomeOption: "JDKVersion"
                     jdkVersionOption: "1.17"
