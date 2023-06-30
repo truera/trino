@@ -5,7 +5,7 @@ pool: "AWS-2XL"
 parameters:
     - name: artifactName
       type: string
-      default: "truers-trino_plugin"
+      default: "truers-trino-plugin"
     - name: trinoVersion
       type: string
       default: "406"
@@ -31,12 +31,10 @@ stages:
                     options: -DskipTests -Dair.check.skip-all=true
                     publishJUnitResults: false
                     javaHomeOption: "JDKVersion"
-                    jdkVersionOption: "1.8"
-                    jdkArchitectureOption: 'x64'
+                    jdkVersionOption: "17"
                     mavenVersionOption: "Default"
                     mavenAuthenticateFeed: false
                     effectivePomSkip: false
-                    sonarQubeRunAnalysis: false
                     mavenOptions: "-Xmx4096m"
               - bash: |
                     az artifacts universal publish
