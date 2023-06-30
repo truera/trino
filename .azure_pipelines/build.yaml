@@ -41,7 +41,8 @@ stages:
                     publishJUnitResults: false
                     javaHomeOption: "JDKVersion"
                     jdkVersionOption: "1.17"
-                    mavenVersionOption: "/tmp/maven_3_9_3"
+                    mavenVersionOption: 'Path'
+                    mavenDirectory: "/tmp/maven_3_9_3"
                     mavenAuthenticateFeed: false
                     effectivePomSkip: false
                     mavenOptions: "-Xmx4096m"
