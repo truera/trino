@@ -11,53 +11,46 @@ parameters:
       default: "406"
 
 
-stages:
-    - stage: build_code_and_publish_artifact
-      dependsOn: []
-      jobs:
-        - job: build_code_and_publish_artifact_job
-          pool:
-              name: AWS-2XL
-          steps:
-              - bash: |
-                    which java; java --version
-                displayName: "Check java version"
-              - bash: |
-                      mvn -version
-                displayName: "Check maven version"
-              - bash: |
-                      set -e
-                      cd /tmp
-                      wget https://dlcdn.apache.org/maven/maven-3/3.9.3/binaries/apache-maven-3.9.3-bin.tar.gz
-                      tar xvf apache-maven-3.9.3-bin.tar.gz
-                      mkdir -p /tmp/maven_3_9_3
-                      cd /tmp/maven_3_9_3
-                      sudo cp -r /tmp/apache-maven-3.9.3/* .
-              - task: Maven@3
-                inputs:
-                    mavenPomFile: "plugin/trino-truera/pom.xml"
-                    goals: clean install
-                    options: -DskipTests -Dair.check.skip-all=true -X
-                    publishJUnitResults: false
-                    javaHomeOption: "JDKVersion"
-                    jdkVersionOption: "1.17"
-                    mavenVersionOption: 'Path'
-                    mavenDirectory: "/tmp/maven_3_9_3"
-                    mavenAuthenticateFeed: false
-                    effectivePomSkip: false
-                    mavenOptions: "-Xmx4096m"
-              - bash: |
-                      set -e
-                      cp "plugin/trino-truera/target/trino-truera-${TRUERA_TRINO_PLUGIN_VERSION}.zip" "${PUBLISH_DIRECTORY}"
-                env:
-                      TRUERA_TRINO_PLUGIN_VERSION: ${{ parameters.trinoVersion }}
-                      PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)
-                displayName: "Copy zip file to separate folder"
-              - task: UniversalPackages@0
-                inputs:
-                  command: publish
-                  publishDirectory: '$(Build.ArtifactStagingDirectory)'
-                  vstsFeedPublish: 'truera/trino-plugin'
-                  vstsFeedPackagePublish: 'trino-plugin'
-                  packagePublishDescription: 'Trino plugin description'
-                displayName: "Publish universal package"
+jobs:
+  - job: build_code_and_publish_artifact_job
+    pool:
+        name: AWS-2XL
+    steps:
+        - bash: |
+                set -e
+                cd /tmp
+                wget https://dlcdn.apache.org/maven/maven-3/3.9.3/binaries/apache-maven-3.9.3-bin.tar.gz
+                tar xvf apache-maven-3.9.3-bin.tar.gz
+                mkdir -p /tmp/maven_3_9_3
+                cd /tmp/maven_3_9_3
+                sudo cp -r /tmp/apache-maven-3.9.3/* .
+          displayName: "Install mvn 3.9.3"
+        - task: Maven@3
+          inputs:
+              mavenPomFile: "plugin/trino-truera/pom.xml"
+              goals: clean install
+              options: -DskipTests -Dair.check.skip-all=true -X
+              publishJUnitResults: false
+              javaHomeOption: "JDKVersion"
+              jdkVersionOption: "1.17"
+              mavenVersionOption: 'Path'
+              mavenDirectory: "/tmp/maven_3_9_3"
+              mavenAuthenticateFeed: false
+              effectivePomSkip: false
+              mavenOptions: "-Xmx4096m"
+          displayName: "Maven build"
+        - bash: |
+                set -e
+                cp "plugin/trino-truera/target/trino-truera-${TRUERA_TRINO_PLUGIN_VERSION}.zip" "${PUBLISH_DIRECTORY}"
+          env:
+                TRUERA_TRINO_PLUGIN_VERSION: ${{ parameters.trinoVersion }}
+                PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)
+          displayName: "Copy zip file to separate folder"
+        - task: UniversalPackages@0
+          inputs:
+            command: publish
+            publishDirectory: '$(Build.ArtifactStagingDirectory)'
+            vstsFeedPublish: 'truera/trino-plugin'
+            vstsFeedPackagePublish: 'trino-plugin'
+            packagePublishDescription: 'Trino plugin description'
+          displayName: "Publish universal package"
