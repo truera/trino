@@ -39,7 +39,7 @@
         <module>core/trino-spi</module>
         <module>docs</module>
         <module>lib/trino-array</module>
-        <module>lib/trino-collect</module>
+        <module>lib/trino-cache</module>
         <module>lib/trino-filesystem</module>
         <module>lib/trino-filesystem-azure</module>
         <module>lib/trino-filesystem-manager</module>
@@ -907,6 +907,19 @@
 
             <dependency>
                 <groupId>io.trino</groupId>
+                <artifactId>trino-cache</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-cache</artifactId>
+                <version>${project.version}</version>
+                <type>test-jar</type>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
                 <artifactId>trino-cli</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -915,19 +928,6 @@
                 <groupId>io.trino</groupId>
                 <artifactId>trino-client</artifactId>
                 <version>${project.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>io.trino</groupId>
-                <artifactId>trino-collect</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>io.trino</groupId>
-                <artifactId>trino-collect</artifactId>
-                <version>${project.version}</version>
-                <type>test-jar</type>
             </dependency>
 
             <dependency>
@@ -2101,7 +2101,7 @@
                 <plugin>
                     <groupId>ca.vanzyl.provisio.maven.plugins</groupId>
                     <artifactId>provisio-maven-plugin</artifactId>
-                    <version>1.0.18</version>
+                    <version>1.0.20</version>
                 </plugin>
 
                 <plugin>
@@ -2175,6 +2175,12 @@
                     <configuration>
                         <dynamicDependencies>
                             <DynamicDependency>
+                                <groupId>ca.vanzyl.provisio.maven.plugins</groupId>
+                                <artifactId>provisio-maven-plugin</artifactId>
+                                <version>1.0.20</version>
+                                <repositoryType>PLUGIN</repositoryType>
+                            </DynamicDependency>
+                            <DynamicDependency>
                                 <groupId>org.apache.maven.plugins</groupId>
                                 <artifactId>maven-javadoc-plugin</artifactId>
                                 <version>3.2.0</version>
@@ -2190,6 +2196,12 @@
                                 <groupId>io.airlift.drift</groupId>
                                 <artifactId>drift-javadoc</artifactId>
                                 <version>${dep.drift.version}</version>
+                                <repositoryType>PLUGIN</repositoryType>
+                            </DynamicDependency>
+                            <DynamicDependency>
+                                <groupId>io.takari.maven.plugins</groupId>
+                                <artifactId>takari-lifecycle-plugin</artifactId>
+                                <version>2.1.1</version>
                                 <repositoryType>PLUGIN</repositoryType>
                             </DynamicDependency>
                             <DynamicDependency>
@@ -2376,6 +2388,7 @@
                                     -Xep:NullOptional:ERROR \
                                     -Xep:ObjectToString:ERROR \
                                     -Xep:OptionalNotPresent:ERROR \
+                                    -Xep:OrphanedFormatString:ERROR \
                                     -Xep:Overrides:ERROR \
                                     <!-- flags List fields even if initialized with ImmutableList -->
                                     -Xep:PreferredInterfaceType:OFF \
