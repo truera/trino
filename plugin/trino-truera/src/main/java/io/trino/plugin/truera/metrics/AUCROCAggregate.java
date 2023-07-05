@@ -13,7 +13,6 @@ import io.trino.spi.function.SqlType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.StandardTypes;
 
-import java.util.Collections;
 import java.util.List;
 
 @AggregationFunction("auc_roc")
@@ -28,6 +27,7 @@ public class AUCROCAggregate {
 
     @CombineFunction
     public static void combine(@AggregationState AUCAccumulatorState state, @AggregationState AUCAccumulatorState otherState) {
+        // Can we sort here?
         state.getActuals().addAll(otherState.getActuals());
         state.getPredictions().addAll(otherState.getPredictions());
     }
