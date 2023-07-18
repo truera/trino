@@ -41,17 +41,18 @@ jobs:
           displayName: "Maven build"
         - bash: |
                 set -e
-                cp "plugin/trino-truera/target/trino-truera-${TRUERA_TRINO_PLUGIN_VERSION}.zip" "${PUBLISH_DIRECTORY}/truera"
+                cp "plugin/trino-truera/target/trino-truera-${TRUERA_TRINO_PLUGIN_VERSION}.zip" "${PUBLISH_DIRECTORY}"
+                unzip -l "${PUBLISH_DIRECTORY"
           env:
                 TRUERA_TRINO_PLUGIN_VERSION: ${{ parameters.trinoVersion }}
-                PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)
+                PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)/truera
           displayName: "Copy zip file to separate folder"
         - task: UniversalPackages@0
           inputs:
             command: publish
-            publishDirectory: '$(Build.ArtifactStagingDirectory)'
-            vstsFeedPublish: 'truera/trino-plugin'
-            vstsFeedPackagePublish: 'trino-plugin'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/truera'
+            vstsFeedPublish: 'truera/truera-trino-plugin'
+            vstsFeedPackagePublish: 'truera-trino-plugin'
             packagePublishDescription: 'Trino plugin description'
           displayName: "Publish universal package"
   - job: build_trino_querylog_plugin_and_publish
@@ -83,17 +84,17 @@ jobs:
           displayName: "Maven build"
         - bash: |
               set -e
-              cp "plugin/trino-querylog/target/trino-querylog-${TRUERA_TRINO_PLUGIN_VERSION}.jar" "${PUBLISH_DIRECTORY}/querylog"
-              cp "plugin/trino-querylog/target/trino-querylog-${TRUERA_TRINO_PLUGIN_VERSION}-dist.zip" "${PUBLISH_DIRECTORY}/querylog"
+              cp "plugin/trino-querylog/target/trino-querylog-${TRUERA_TRINO_PLUGIN_VERSION}-dist.zip" "${PUBLISH_DIRECTORY}"
+              unzip -l "${PUBLISH_DIRECTORY}"
           env:
               TRUERA_TRINO_PLUGIN_VERSION: ${{ parameters.trinoVersion }}
-              PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)
+              PUBLISH_DIRECTORY: $(Build.ArtifactStagingDirectory)/querylog
           displayName: "Copy jars to separate folder"
         - task: UniversalPackages@0
           inputs:
               command: publish
-              publishDirectory: '$(Build.ArtifactStagingDirectory)'
-              vstsFeedPublish: 'truera/trino-plugin'
-              vstsFeedPackagePublish: 'trino-plugin'
+              publishDirectory: '$(Build.ArtifactStagingDirectory)/querylog'
+              vstsFeedPublish: 'truera/trino-querylog-plugin'
+              vstsFeedPackagePublish: 'trino-querylog-plugin'
               packagePublishDescription: 'Trino plugin description'
           displayName: "Publish universal package"
