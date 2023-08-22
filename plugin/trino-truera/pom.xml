@@ -90,6 +90,11 @@
             <groupId>io.trino</groupId>
             <artifactId>trino-main</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.apache.datasketches</groupId>
+            <artifactId>datasketches-java</artifactId>
+            <version>3.3.0</version>
+        </dependency>
     </dependencies>
 
     <build>
