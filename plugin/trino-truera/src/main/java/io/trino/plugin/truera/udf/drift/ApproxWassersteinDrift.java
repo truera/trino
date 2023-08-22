@@ -1,51 +1,44 @@
 package io.trino.plugin.truera.udf.drift;
 
+import com.clearspring.analytics.stream.quantile.QDigest;
 import com.google.common.base.Preconditions;
-import io.trino.plugin.truera.metrics.AUCAccumulatorState;
-import io.trino.plugin.truera.udf.state.ApproxDriftAccumulatorState;
-import io.trino.spi.block.BlockBuilder;
-import io.trino.spi.function.*;
-import io.trino.spi.type.DoubleType;
+import io.airlift.slice.Slice;
+import io.trino.spi.function.Description;
+import io.trino.spi.function.ScalarFunction;
+import io.trino.spi.function.SqlNullable;
+import io.trino.spi.function.SqlType;
 import io.trino.spi.type.StandardTypes;
-import org.apache.datasketches.kll.KllDoublesSketch;
 
-import java.util.List;
+import java.util.Arrays;
 import java.util.stream.IntStream;
 
-import static io.trino.plugin.truera.AreaUnderRocCurveAlgorithm.computeRocAuc;
+import static io.trino.operator.aggregation.FloatingPointBitsConverterUtil.sortableLongToDouble;
+import static io.trino.operator.scalar.QuantileDigestFunctions.valueAtQuantileBigint;
 
-@AggregationFunction("approx_wasserstein_drift")
-@Description("Calculates the Area Under the Curve (AUC)")
 public class ApproxWassersteinDrift {
 
-    @InputFunction
-    public static void input(@AggregationState ApproxDriftAccumulatorState state, @SqlType(StandardTypes.DOUBLE) double col1, @SqlType(StandardTypes.DOUBLE) double col2) {
-        state.getLhsSketch().update(col1);
-        state.getLhsSketch().update(col2);
-    }
+    private ApproxWassersteinDrift(){}
 
-    @CombineFunction
-    public static void combine(@AggregationState ApproxDriftAccumulatorState state, @AggregationState ApproxDriftAccumulatorState otherState) {
-        state.getLhsSketch().merge(otherState.getLhsSketch());
-        state.getRhsSketch().merge(otherState.getRhsSketch());
-    }
-
-    @OutputFunction(StandardTypes.DOUBLE)
-    public static void output(@AggregationState ApproxDriftAccumulatorState state, BlockBuilder out) {
+    @ScalarFunction(value="approx_wasserstein_drift", deterministic = true)
+    @Description("Returns TRUE if the argument is NULL")
+    @SqlType(StandardTypes.DOUBLE)
+    public static double WassersteinDrift(
+            @SqlType("qdigest(double)") Slice leftSketch,
+            @SqlType("qdigest(double)") Slice rightSketch)
+    {
         final double[] fractions = getBinsFromRange(0., 1., 1000);
-        final KllDoublesSketch leftSketch = state.getLhsSketch();
-        final KllDoublesSketch rightSketch = state.getRhsSketch();
-        final double[] leftQuantiles = leftSketch.getQuantiles(fractions);
-        final double[] rightQuantiles = rightSketch.getQuantiles(fractions);
+        final double[] leftQuantiles = Arrays.stream(fractions).map(
+                quantile -> sortableLongToDouble(valueAtQuantileBigint(leftSketch, quantile))
+        ).toArray();
+        final double[] rightQuantiles = Arrays.stream(fractions).map(
+                quantile -> sortableLongToDouble(valueAtQuantileBigint(rightSketch, quantile))
+        ).toArray();
 
-        final double approxDrift = trapezoidalIntegration(
-                IntStream.range(0, leftQuantiles.length).mapToDouble(i -> Math.abs(rightQuantiles[i] - leftQuantiles[i])).toArray(), fractions);
+        final double wasserstein =
+                trapezoidalIntegration(
+                        IntStream.range(0, leftQuantiles.length).mapToDouble(i -> Math.abs(rightQuantiles[i] - leftQuantiles[i])).toArray(), fractions);
 
-        DoubleType.DOUBLE.writeDouble(out, approxDrift);
-    }
-
-    public static double[] getBinsFromRange(double start, double stop, int numBins) {
-        return IntStream.rangeClosed(0, numBins).mapToDouble(i -> start + i * ((stop - start) / (float) numBins)).toArray();
+        return wasserstein;
     }
 
     public static double trapezoidalIntegration(double[] ys, double[] xs) {
@@ -55,5 +48,9 @@ public class ApproxWassersteinDrift {
             area += (ys[i] + ys[i + 1]) * (xs[i + 1] - xs[i]) / 2;
         }
         return area;
+    }
+
+    public static double[] getBinsFromRange(double start, double stop, int numBins) {
+        return IntStream.rangeClosed(0, numBins).mapToDouble(i -> start + i * ((stop - start) / (float) numBins)).toArray();
     }
 }
