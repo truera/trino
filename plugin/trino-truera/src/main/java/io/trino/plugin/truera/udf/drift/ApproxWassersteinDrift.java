@@ -21,7 +21,7 @@ public class ApproxWassersteinDrift {
 
     @ScalarFunction(value="approx_wasserstein_drift", deterministic = true)
     @Description("Returns ApproxWassersteinDrift between 2 sketches")
-    @SqlType(StandardTypes.BIGINT)
+    @SqlType(StandardTypes.DOUBLE)
     public static double approxWassersteinDrift(
             @SqlType("qdigest(double)") Slice leftSketch,
             @SqlType("qdigest(double)") Slice rightSketch) {
@@ -30,7 +30,7 @@ public class ApproxWassersteinDrift {
 
     @ScalarFunction(value="approx_wasserstein_drift", deterministic = true)
     @Description("Returns ApproxWassersteinDrift between 2 sketches")
-    @SqlType(StandardTypes.BIGINT)
+    @SqlType(StandardTypes.DOUBLE)
     public static double approxWassersteinDrift(
             @SqlType("qdigest(double)") Slice leftSketch,
             @SqlType("qdigest(double)") Slice rightSketch,
