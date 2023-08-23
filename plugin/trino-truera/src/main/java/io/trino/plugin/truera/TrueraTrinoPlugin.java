@@ -16,6 +16,7 @@ package io.trino.plugin.truera;
 import com.google.common.collect.ImmutableSet;
 import io.trino.plugin.truera.metrics.AUCROCAggregate;
 import io.trino.plugin.truera.udf.drift.ApproxWassersteinDrift;
+import io.trino.plugin.truera.udf.drift.WassersteinDrift;
 import io.trino.spi.Plugin;
 import java.util.Set;
 
@@ -29,6 +30,7 @@ public class TrueraTrinoPlugin
         return ImmutableSet.<Class<?>>builder()
                 .add(AUCROCAggregate.class)
                 .add(ApproxWassersteinDrift.class)
+                .add(WassersteinDrift.class)
                 .build();
     }
 }
