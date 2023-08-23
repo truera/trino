@@ -50,7 +50,7 @@ public class WassersteinDriftAlgorithm {
 
     /**
      * Returns wasserstein distance between two lists using the same approach as scikit learn.
-     * https://github.com/scipy/scipy/blob/v1.11.2/scipy/stats/_stats_py.py#L9896
+     * <a href="https://github.com/scipy/scipy/blob/v1.11.2/scipy/stats/_stats_py.py#L9896">Scikit Source.</a>
      */
     public static double computeWassersteinScikit(List<Double> leftSeries, List<Double> rightSeries) {
         List<Double> allSeries = new ArrayList<>(leftSeries);
