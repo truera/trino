@@ -35,7 +35,7 @@ public class WassersteinDrift {
             throw new IllegalArgumentException("Invalid input");
         }
 
-        double wasserstein = WassersteinDriftAlgorithm.computeWasserstein(actuals, predictions);
+        double wasserstein = WassersteinDriftAlgorithm.computeWassersteinScikit(actuals, predictions);
         DoubleType.DOUBLE.writeDouble(out, wasserstein);
     }
 }
