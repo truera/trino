@@ -86,12 +86,4 @@ public class WassersteinDriftAlgorithm {
         }
         return maxRightIndex;
     }
-
-    public static void main(String[] args) {
-        List<Double> left = Arrays.asList(0,1, 2, 4, 7)
-                .stream().map(Integer::doubleValue).toList();
-        List<Double> right = Arrays.asList(1, 3, 5, 8, 10)
-                .stream().map(Integer::doubleValue).toList();
-        System.out.println(computeWassersteinScikit(left,right));
-    }
 }
