@@ -12,12 +12,11 @@ import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 
 import static io.trino.operator.aggregation.FloatingPointBitsConverterUtil.sortableLongToDouble;
-import static io.trino.operator.scalar.QuantileDigestFunctions.DEFAULT_ACCURACY;
 import static io.trino.operator.scalar.QuantileDigestFunctions.valueAtQuantileBigint;
 
 public class ApproxWassersteinDrift {
 
-    public static final double ACCURACY = 0.001;
+    public static final double DEFAULT_ACCURACY = 0.001;
 
     @ScalarFunction(value="approx_wasserstein_drift", deterministic = true)
     @Description("Returns ApproxWassersteinDrift between 2 sketches")
