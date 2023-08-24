@@ -6,3 +6,5 @@ then
 fi
 rm -rf $AILENS_DEPENDENCIES_DIR_OVERRIDE/trino-server/plugin/trino-truera*
 unzip target/trino-truera-*.zip -d $AILENS_DEPENDENCIES_DIR_OVERRIDE/trino-server/plugin
+
+echo "Installed Plugin at time:"$(date)
