@@ -14,7 +14,8 @@ public class WassersteinDriftAlgorithm {
      * <a href="https://github.com/scipy/scipy/blob/v1.11.2/scipy/stats/_stats_py.py#L9896">Scikit Source.</a>
      */
     public static double computeWassersteinScikit(List<Double> leftSeries, List<Double> rightSeries) {
-        long lastTime = Instant.now().toEpochMilli();
+        long startTime = Instant.now().toEpochMilli();
+        long prevTime = startTime;
         List<Double> allSeries = new ArrayList<>(leftSeries);
         allSeries.addAll(rightSeries);
         Collections.sort(allSeries);
@@ -23,12 +24,12 @@ public class WassersteinDriftAlgorithm {
         Collections.sort(leftSorted);
         Collections.sort(rightSorted);
         // TODO: Use non global logger
-        Logger.getGlobal().info("Time taken to run sort all lists: "+(Instant.now().toEpochMilli()-lastTime));
-        lastTime = Instant.now().toEpochMilli();
+        Logger.getGlobal().info("Time taken to run sort all lists: "+(Instant.now().toEpochMilli()-prevTime));
+        prevTime = Instant.now().toEpochMilli();
         final double[] leftCdf = buildCdf(leftSorted,allSeries);
         final double[] rightCdf = buildCdf(rightSorted,allSeries);
-        Logger.getGlobal().info("Time taken to run cdf creation: "+(Instant.now().toEpochMilli()-lastTime));
-        lastTime = Instant.now().toEpochMilli();
+        Logger.getGlobal().info("Time taken to run cdf creation: "+(Instant.now().toEpochMilli()-prevTime));
+        prevTime = Instant.now().toEpochMilli();
         final List<Double> deltas = IntStream.range(0, allSeries.size()-1)
                 .mapToDouble(i -> allSeries.get(i+1) - allSeries.get(i))
                 .boxed().toList();
@@ -36,7 +37,8 @@ public class WassersteinDriftAlgorithm {
         for(int i=0;i<deltas.size();i++){
             result += Math.abs(leftCdf[i] - rightCdf[i]) * deltas.get(i);
         }
-        Logger.getGlobal().info("Time taken to complete compute drift: "+ (Instant.now().toEpochMilli()-lastTime));
+        Logger.getGlobal().info("Time taken to complete compute drift: "+ (Instant.now().toEpochMilli()-prevTime));
+        Logger.getGlobal().info("computeWassersteinScikit function took:"+ (Instant.now().toEpochMilli() - startTime));
         return result;
     }
 
