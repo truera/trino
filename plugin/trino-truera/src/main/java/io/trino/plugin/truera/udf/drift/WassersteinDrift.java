@@ -12,6 +12,7 @@ import java.util.List;
 @Description("Calculates the wassersteins drift")
 public class WassersteinDrift {
 
+    // TODO: in a separate PR, move AUCAccumulatorState to udf/drift/state. Rename it to BiSeriesAccumulatorState.
     @InputFunction
     public static void input(@AggregationState AUCAccumulatorState state, @SqlType(StandardTypes.DOUBLE) double actual, @SqlType(StandardTypes.DOUBLE) double prediction) {
         state.getActuals().add(actual);
