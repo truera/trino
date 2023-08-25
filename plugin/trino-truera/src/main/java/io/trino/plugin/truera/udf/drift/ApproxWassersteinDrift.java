@@ -1,14 +1,20 @@
 package io.trino.plugin.truera.udf.drift;
 
+import com.clearspring.analytics.stream.quantile.QDigest;
 import com.google.common.base.Preconditions;
+import com.google.common.primitives.Doubles;
 import io.airlift.slice.Slice;
+import io.airlift.stats.QuantileDigest;
 import io.trino.spi.function.Description;
 import io.trino.spi.function.ScalarFunction;
 import io.trino.spi.function.SqlType;
 import io.trino.spi.type.StandardTypes;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 import static io.trino.operator.aggregation.FloatingPointBitsConverterUtil.sortableLongToDouble;
 import static io.trino.operator.scalar.QuantileDigestFunctions.valueAtQuantileBigint;
@@ -30,32 +36,44 @@ public class ApproxWassersteinDrift {
     @Description("Returns ApproxWassersteinDrift between 2 sketches")
     @SqlType(StandardTypes.DOUBLE)
     public static double approxWassersteinDrift(
-            @SqlType("qdigest(double)") Slice leftSketch,
-            @SqlType("qdigest(double)") Slice rightSketch,
+            @SqlType("qdigest(double)") Slice leftSketchSlice,
+            @SqlType("qdigest(double)") Slice rightSketchSlice,
             @SqlType(StandardTypes.DOUBLE) double accuracy) {
-        long prevTime = Instant.now().toEpochMilli();
+        long startTime = Instant.now().toEpochMilli();
+        long prevTime = startTime;
         Logger.getGlobal().info("Starting approx_wasserstein_drift at time: "+ prevTime);
         prevTime = Instant.now().toEpochMilli();
-        final double[] fractions = getBinsFromRange(0., 1., (int) (1/accuracy));
+
+        final QuantileDigest leftSketch = new QuantileDigest(leftSketchSlice);
+        final QuantileDigest rightSketch = new QuantileDigest(rightSketchSlice);
+        Logger.getGlobal().info("Sketch deserialization took: "+ (Instant.now().toEpochMilli() - prevTime));
+        prevTime = Instant.now().toEpochMilli();
+
+        final List<Double> fractions = getBinsFromRange(0., 1., (int) (1/accuracy));
         Logger.getGlobal().info("getBinsFromRange took:"+ (Instant.now().toEpochMilli() - prevTime));
         prevTime = Instant.now().toEpochMilli();
+
         final double[] leftQuantiles = getQuantileValues(leftSketch, fractions);
         final double[] rightQuantiles = getQuantileValues(rightSketch, fractions);
         Logger.getGlobal().info("quantile creation took:"+ (Instant.now().toEpochMilli() - prevTime));
         prevTime = Instant.now().toEpochMilli();
+
         final double[] quantileDiff = new double[leftQuantiles.length];
         for(int i=0;i<leftQuantiles.length; i++){
             quantileDiff[i] = Math.abs(rightQuantiles[i] - leftQuantiles[i]);
         }
-        double result = trapezoidalIntegration(quantileDiff, fractions);
+        double result = trapezoidalIntegration(quantileDiff, Doubles.toArray(fractions));
         Logger.getGlobal().info("trapezoidalIntegration took:"+ (Instant.now().toEpochMilli() - prevTime));
+        Logger.getGlobal().info("approx_wasserstein_drift udf took:"+ (Instant.now().toEpochMilli() - startTime));
         return  result;
     }
 
-    public static double[] getQuantileValues(Slice qDigestSketch, double[] fractions) {
-        final double[] quantiles = new double[fractions.length];
-        for(int i=0;i<fractions.length;i++){
-            quantiles[i] = sortableLongToDouble(valueAtQuantileBigint(qDigestSketch, fractions[i]));
+    public static double[] getQuantileValues(QuantileDigest quantileDigest, List<Double> fractions) {
+        // Need to transform it as done in QuantileDigestFunctions.valueAtQuantileDouble .
+        List<Long> rawQuantileLongValues = quantileDigest.getQuantiles(fractions);
+        final double[] quantiles = new double[rawQuantileLongValues.size()];
+        for(int i=0;i<rawQuantileLongValues.size();i++){
+            quantiles[i] = sortableLongToDouble(rawQuantileLongValues.get(i));
         }
         return quantiles;
     }
@@ -69,11 +87,7 @@ public class ApproxWassersteinDrift {
         return area;
     }
 
-    public static double[] getBinsFromRange(double start, double stop, int numBins) {
-        final double[] fractions = new double[numBins];
-        for(int i=0;i<numBins;i++){
-             fractions[i] = start + i * ((stop - start) / (float) numBins);
-        }
-        return fractions;
+    public static List<Double> getBinsFromRange(double start, double stop, int numBins) {
+        return LongStream.rangeClosed(0, numBins).mapToDouble(i -> start + i * ((stop - start) / (float) numBins)).boxed().toList();
     }
 }
