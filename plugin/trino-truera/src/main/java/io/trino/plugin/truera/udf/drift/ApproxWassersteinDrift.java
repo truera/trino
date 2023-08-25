@@ -7,9 +7,8 @@ import io.trino.spi.function.ScalarFunction;
 import io.trino.spi.function.SqlType;
 import io.trino.spi.type.StandardTypes;
 
-import java.util.Arrays;
-import java.util.stream.IntStream;
-import java.util.stream.LongStream;
+import java.time.Instant;
+import java.util.logging.Logger;
 
 import static io.trino.operator.aggregation.FloatingPointBitsConverterUtil.sortableLongToDouble;
 import static io.trino.operator.scalar.QuantileDigestFunctions.valueAtQuantileBigint;
@@ -34,19 +33,31 @@ public class ApproxWassersteinDrift {
             @SqlType("qdigest(double)") Slice leftSketch,
             @SqlType("qdigest(double)") Slice rightSketch,
             @SqlType(StandardTypes.DOUBLE) double accuracy) {
-        final double[] fractions = getBinsFromRange(0., 1., (long) (1/accuracy));
-        final double[] leftQuantiles = Arrays.stream(fractions).map(
-                quantile -> sortableLongToDouble(valueAtQuantileBigint(leftSketch, quantile))
-        ).toArray();
-        final double[] rightQuantiles = Arrays.stream(fractions).map(
-                quantile -> sortableLongToDouble(valueAtQuantileBigint(rightSketch, quantile))
-        ).toArray();
+        long prevTime = Instant.now().toEpochMilli();
+        Logger.getGlobal().info("Starting approx_wasserstein_drift at time: "+ prevTime);
+        prevTime = Instant.now().toEpochMilli();
+        final double[] fractions = getBinsFromRange(0., 1., (int) (1/accuracy));
+        Logger.getGlobal().info("getBinsFromRange took:"+ (Instant.now().toEpochMilli() - prevTime));
+        prevTime = Instant.now().toEpochMilli();
+        final double[] leftQuantiles = getQuantileValues(leftSketch, fractions);
+        final double[] rightQuantiles = getQuantileValues(rightSketch, fractions);
+        Logger.getGlobal().info("quantile creation took:"+ (Instant.now().toEpochMilli() - prevTime));
+        prevTime = Instant.now().toEpochMilli();
+        final double[] quantileDiff = new double[leftQuantiles.length];
+        for(int i=0;i<leftQuantiles.length; i++){
+            quantileDiff[i] = Math.abs(rightQuantiles[i] - leftQuantiles[i]);
+        }
+        double result = trapezoidalIntegration(quantileDiff, fractions);
+        Logger.getGlobal().info("trapezoidalIntegration took:"+ (Instant.now().toEpochMilli() - prevTime));
+        return  result;
+    }
 
-        final double wasserstein =
-                trapezoidalIntegration(
-                        IntStream.range(0, leftQuantiles.length).mapToDouble(i -> Math.abs(rightQuantiles[i] - leftQuantiles[i])).toArray(), fractions);
-
-        return wasserstein;
+    public static double[] getQuantileValues(Slice qDigestSketch, double[] fractions) {
+        final double[] quantiles = new double[fractions.length];
+        for(int i=0;i<fractions.length;i++){
+            quantiles[i] = sortableLongToDouble(valueAtQuantileBigint(qDigestSketch, fractions[i]));
+        }
+        return quantiles;
     }
 
     public static double trapezoidalIntegration(double[] ys, double[] xs) {
@@ -58,7 +69,11 @@ public class ApproxWassersteinDrift {
         return area;
     }
 
-    public static double[] getBinsFromRange(double start, double stop, long numBins) {
-        return LongStream.rangeClosed(0, numBins).mapToDouble(i -> start + i * ((stop - start) / (float) numBins)).toArray();
+    public static double[] getBinsFromRange(double start, double stop, int numBins) {
+        final double[] fractions = new double[numBins];
+        for(int i=0;i<numBins;i++){
+             fractions[i] = start + i * ((stop - start) / (float) numBins);
+        }
+        return fractions;
     }
 }
