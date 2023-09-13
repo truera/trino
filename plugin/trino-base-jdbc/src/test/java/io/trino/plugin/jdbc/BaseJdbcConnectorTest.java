@@ -16,9 +16,11 @@ package io.trino.plugin.jdbc;
 import com.google.common.collect.ImmutableList;
 import io.airlift.units.Duration;
 import io.trino.Session;
+import io.trino.execution.warnings.WarningCollector;
 import io.trino.spi.QueryId;
 import io.trino.spi.connector.JoinCondition;
 import io.trino.spi.connector.SortOrder;
+import io.trino.sql.planner.Plan;
 import io.trino.sql.planner.assertions.PlanMatchPattern;
 import io.trino.sql.planner.plan.AggregationNode;
 import io.trino.sql.planner.plan.ExchangeNode;
@@ -40,6 +42,7 @@ import io.trino.testing.TestingConnectorBehavior;
 import io.trino.testing.sql.SqlExecutor;
 import io.trino.testing.sql.TestTable;
 import io.trino.testing.sql.TestView;
+import io.trino.testng.services.Flaky;
 import org.intellij.lang.annotations.Language;
 import org.testng.SkipException;
 import org.testng.annotations.AfterClass;
@@ -59,7 +62,8 @@ import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.MoreCollectors.toOptional;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
-import static io.trino.SystemSessionProperties.USE_MARK_DISTINCT;
+import static io.trino.SystemSessionProperties.MARK_DISTINCT_STRATEGY;
+import static io.trino.execution.querystats.PlanOptimizersStatsCollector.createPlanOptimizersStatsCollector;
 import static io.trino.plugin.jdbc.JdbcDynamicFilteringSessionProperties.DYNAMIC_FILTERING_ENABLED;
 import static io.trino.plugin.jdbc.JdbcDynamicFilteringSessionProperties.DYNAMIC_FILTERING_WAIT_TIMEOUT;
 import static io.trino.plugin.jdbc.JdbcMetadataSessionProperties.DOMAIN_COMPACTION_THRESHOLD;
@@ -97,14 +101,18 @@ import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_JOIN_PUSHDOWN_W
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_LIMIT_PUSHDOWN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_MERGE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_NATIVE_QUERY;
+import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_NOT_NULL_CONSTRAINT;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_PREDICATE_ARITHMETIC_EXPRESSION_PUSHDOWN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_PREDICATE_EXPRESSION_PUSHDOWN_WITH_LIKE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_PREDICATE_PUSHDOWN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_EQUALITY;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_INEQUALITY;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_LEVEL_DELETE;
+import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_LEVEL_UPDATE;
+import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_TYPE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TOPN_PUSHDOWN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TOPN_PUSHDOWN_WITH_VARCHAR;
+import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_UPDATE;
 import static io.trino.testing.TestingNames.randomNameSuffix;
 import static io.trino.testing.assertions.Assert.assertEventually;
 import static java.lang.String.format;
@@ -130,28 +138,19 @@ public abstract class BaseJdbcConnectorTest
     @Override
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
-        switch (connectorBehavior) {
-            case SUPPORTS_UPDATE: // not supported by any JDBC connector
-            case SUPPORTS_MERGE: // not supported by any JDBC connector
-                return false;
-
-            case SUPPORTS_CREATE_VIEW: // not supported by DefaultJdbcMetadata
-            case SUPPORTS_CREATE_MATERIALIZED_VIEW: // not supported by DefaultJdbcMetadata
-                return false;
-
-            case SUPPORTS_PREDICATE_EXPRESSION_PUSHDOWN:
-                // TODO support pushdown of complex expressions in predicates
-                return false;
-
-            case SUPPORTS_DYNAMIC_FILTER_PUSHDOWN:
-                // Dynamic filters can be pushed down only if predicate push down is supported.
-                // It is possible for a connector to have predicate push down support but not push down dynamic filters.
-                // TODO default SUPPORTS_DYNAMIC_FILTER_PUSHDOWN to SUPPORTS_PREDICATE_PUSHDOWN
-                return super.hasBehavior(SUPPORTS_PREDICATE_PUSHDOWN);
-
-            default:
-                return super.hasBehavior(connectorBehavior);
-        }
+        return switch (connectorBehavior) {
+            case SUPPORTS_UPDATE -> true;
+            case SUPPORTS_CREATE_MATERIALIZED_VIEW,
+                    SUPPORTS_CREATE_VIEW,
+                    SUPPORTS_MERGE,
+                    SUPPORTS_PREDICATE_EXPRESSION_PUSHDOWN,
+                    SUPPORTS_ROW_LEVEL_UPDATE -> false;
+            // Dynamic filters can be pushed down only if predicate push down is supported.
+            // It is possible for a connector to have predicate push down support but not push down dynamic filters.
+            // TODO default SUPPORTS_DYNAMIC_FILTER_PUSHDOWN to SUPPORTS_PREDICATE_PUSHDOWN
+            case SUPPORTS_DYNAMIC_FILTER_PUSHDOWN -> super.hasBehavior(SUPPORTS_PREDICATE_PUSHDOWN);
+            default -> super.hasBehavior(connectorBehavior);
+        };
     }
 
     @Test
@@ -463,7 +462,7 @@ public abstract class BaseJdbcConnectorTest
         }
 
         Session withMarkDistinct = Session.builder(getSession())
-                .setSystemProperty(USE_MARK_DISTINCT, "true")
+                .setSystemProperty(MARK_DISTINCT_STRATEGY, "always")
                 .build();
         // distinct aggregation
         assertThat(query(withMarkDistinct, "SELECT count(DISTINCT regionkey) FROM nation")).isFullyPushedDown();
@@ -499,7 +498,7 @@ public abstract class BaseJdbcConnectorTest
                 node(MarkDistinctNode.class, node(ExchangeNode.class, node(ExchangeNode.class, node(ProjectNode.class, node(TableScanNode.class))))));
 
         Session withoutMarkDistinct = Session.builder(getSession())
-                .setSystemProperty(USE_MARK_DISTINCT, "false")
+                .setSystemProperty(MARK_DISTINCT_STRATEGY, "none")
                 .build();
         // distinct aggregation
         assertThat(query(withoutMarkDistinct, "SELECT count(DISTINCT regionkey) FROM nation")).isFullyPushedDown();
@@ -1522,6 +1521,170 @@ public abstract class BaseJdbcConnectorTest
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public void testUpdateNotNullColumn()
+    {
+        // we don't support metadata update for null expressions yet, remove override as soon as support will be added
+        if (hasBehavior(SUPPORTS_ROW_LEVEL_UPDATE)) {
+            super.testUpdateNotNullColumn();
+            return;
+        }
+
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE));
+
+        if (!hasBehavior(SUPPORTS_NOT_NULL_CONSTRAINT)) {
+            assertQueryFails(
+                    "CREATE TABLE not_null_constraint (not_null_col INTEGER NOT NULL)",
+                    format("line 1:35: Catalog '%s' does not support non-null column for column name 'not_null_col'", getSession().getCatalog().orElseThrow()));
+            return;
+        }
+
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "update_not_null", "(nullable_col INTEGER, not_null_col INTEGER NOT NULL)")) {
+            assertUpdate(format("INSERT INTO %s (nullable_col, not_null_col) VALUES (1, 10)", table.getName()), 1);
+            assertQuery("SELECT * FROM " + table.getName(), "VALUES (1, 10)");
+            assertQueryFails("UPDATE " + table.getName() + " SET not_null_col = NULL WHERE nullable_col = 1", MODIFYING_ROWS_MESSAGE);
+            assertQueryFails("UPDATE " + table.getName() + " SET not_null_col = TRY(5/0) where nullable_col = 1", MODIFYING_ROWS_MESSAGE);
+        }
+    }
+
+    @Override
+    public void testUpdateRowType()
+    {
+        // we don't support metadata update for expressions yet, remove override as soon as support will be added
+        if (hasBehavior(SUPPORTS_ROW_LEVEL_UPDATE)) {
+            super.testUpdateRowType();
+            return;
+        }
+
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE) && hasBehavior(SUPPORTS_ROW_TYPE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_update_with_predicates_on_row_types", "(int_t INT, row_t ROW(f1 INT, f2 INT))")) {
+            String tableName = table.getName();
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, ROW(2, 3)), (11, ROW(12, 13)), (21, ROW(22, 23))", 3);
+            assertQueryFails("UPDATE " + tableName + " SET int_t = int_t - 1 WHERE row_t.f2 = 3", MODIFYING_ROWS_MESSAGE);
+        }
+    }
+
+    @Override
+    public void testUpdateRowConcurrently()
+            throws Exception
+    {
+        // we don't support metadata update for expressions yet, remove override as soon as support will be added
+        if (hasBehavior(SUPPORTS_ROW_LEVEL_UPDATE)) {
+            super.testUpdateRowConcurrently();
+            return;
+        }
+
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_update_row", "(a INT, b INT, c INT)", ImmutableList.of("1, 2, 3"))) {
+            assertQueryFails("UPDATE " + table.getName() + " SET a = a + 1", MODIFYING_ROWS_MESSAGE);
+        }
+    }
+
+    @Override
+    public void testUpdateAllValues()
+    {
+        // we don't support metadata update for update all, remove override as soon as support will be added
+        if (hasBehavior(SUPPORTS_ROW_LEVEL_UPDATE)) {
+            super.testUpdateAllValues();
+            return;
+        }
+
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_update_all", "(a INT, b INT, c INT)", ImmutableList.of("1, 2, 3"))) {
+            assertQueryFails("UPDATE " + table.getName() + " SET a = 1, b = 1, c = 2", MODIFYING_ROWS_MESSAGE);
+        }
+    }
+
+    @Override
+    public void testUpdateWithPredicates()
+    {
+        // we don't support metadata update for expressions yet, remove override as soon as support will be added
+        // TODO add more test cases to basic test
+        if (hasBehavior(SUPPORTS_ROW_LEVEL_UPDATE)) {
+            super.testUpdateWithPredicates();
+            return;
+        }
+
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_row_predicates", "(a INT, b INT, c INT)")) {
+            String tableName = table.getName();
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, 2, 3), (11, 12, 13), (21, 22, 23)", 3);
+            assertUpdate("UPDATE " + tableName + " SET a = 5 WHERE c = 3", 1);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 2, 3), (11, 12, 13), (21, 22, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET c = 6 WHERE a = 11", 1);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 2, 3), (11, 12, 6), (21, 22, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET b = 44 WHERE b = 22", 1);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 2, 3), (11, 12, 6), (21, 44, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET b = 45 WHERE a > 5", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 2, 3), (11, 45, 6), (21, 45, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET b = 46 WHERE a < 21", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 46, 3), (11, 46, 6), (21, 45, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET b = 47 WHERE a != 11", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 47, 3), (11, 46, 6), (21, 47, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET b = 48 WHERE a IN (5, 11)", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 48, 3), (11, 48, 6), (21, 47, 23)");
+
+            assertUpdate("UPDATE " + tableName + " SET b = 49 WHERE a NOT IN (5, 11)", 1);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (5, 48, 3), (11, 48, 6), (21, 49, 23)");
+
+            assertQueryFails("UPDATE " + tableName + " SET b = b + 3 WHERE a NOT IN (5, 11)", MODIFYING_ROWS_MESSAGE);
+        }
+    }
+
+    @Test
+    public void testConstantUpdateWithVarcharEqualityPredicates()
+    {
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_update_varchar", "(col1 INT, col2 varchar(1))", ImmutableList.of("1, 'a'", "2, 'A'"))) {
+            if (!hasBehavior(SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_EQUALITY)) {
+                assertQueryFails("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 = 'A'", MODIFYING_ROWS_MESSAGE);
+                return;
+            }
+            assertUpdate("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 = 'A'", 1);
+            assertQuery("SELECT * FROM " + table.getName(), "VALUES (1, 'a'), (20, 'A')");
+        }
+    }
+
+    @Test
+    public void testConstantUpdateWithVarcharInequalityPredicates()
+    {
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_update_varchar", "(col1 INT, col2 varchar(1))", ImmutableList.of("1, 'a'", "2, 'A'"))) {
+            if (!hasBehavior(SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_INEQUALITY)) {
+                assertQueryFails("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 != 'A'", MODIFYING_ROWS_MESSAGE);
+                return;
+            }
+
+            assertUpdate("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 != 'A'", 1);
+            assertQuery("SELECT * FROM " + table.getName(), "VALUES (20, 'a'), (2, 'A')");
+        }
+    }
+
+    @Test
+    public void testConstantUpdateWithVarcharGreaterAndLowerPredicate()
+    {
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE) && hasBehavior(SUPPORTS_UPDATE));
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_update_varchar", "(col1 INT, col2 varchar(1))", ImmutableList.of("1, 'a'", "2, 'A'"))) {
+            if (!hasBehavior(SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_INEQUALITY)) {
+                assertQueryFails("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 > 'A'", MODIFYING_ROWS_MESSAGE);
+                assertQueryFails("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 < 'A'", MODIFYING_ROWS_MESSAGE);
+                return;
+            }
+
+            assertUpdate("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 > 'A'", 1);
+            assertQuery("SELECT * FROM " + table.getName(), "VALUES (20, 'a'), (2, 'A')");
+
+            assertUpdate("UPDATE " + table.getName() + " SET col1 = 20 WHERE col2 < 'a'", 1);
+            assertQuery("SELECT * FROM " + table.getName(), "VALUES (20, 'a'), (20, 'A')");
+        }
+    }
+
     @Test
     public void testDeleteWithBigintEqualityPredicate()
     {
@@ -1700,17 +1863,17 @@ public abstract class BaseJdbcConnectorTest
                 getQueryRunner()::execute,
                 "write_parallelism",
                 "(a varchar(128), b bigint)")) {
-            assertUpdate(session, "INSERT INTO " + table.getName() + " (a, b) SELECT clerk, orderkey FROM tpch.sf100.orders LIMIT " + numberOfRows, numberOfRows, plan -> {
-                TableWriterNode.WriterTarget target = searchFrom(plan.getRoot())
-                        .where(node -> node instanceof TableWriterNode)
-                        .findFirst()
-                        .map(TableWriterNode.class::cast)
-                        .map(TableWriterNode::getTarget)
-                        .orElseThrow();
+            Plan plan = getQueryRunner().createPlan(
+                    session,
+                    "INSERT INTO " + table.getName() + " (a, b) SELECT clerk, orderkey FROM tpch.sf100.orders LIMIT " + numberOfRows,
+                    WarningCollector.NOOP,
+                    createPlanOptimizersStatsCollector());
+            TableWriterNode.WriterTarget target = ((TableWriterNode) searchFrom(plan.getRoot())
+                    .where(node -> node instanceof TableWriterNode)
+                    .findOnlyElement()).getTarget();
 
-                assertThat(target.getMaxWriterTasks(getQueryRunner().getMetadata(), getSession()))
-                        .hasValue(parallelism);
-            });
+            assertThat(target.getMaxWriterTasks(getQueryRunner().getMetadata(), getSession()))
+                    .hasValue(parallelism);
         }
     }
 
@@ -1882,6 +2045,7 @@ public abstract class BaseJdbcConnectorTest
         return new Object[][] {{BROADCAST}, {PARTITIONED}};
     }
 
+    @Flaky(issue = "https://github.com/trinodb/trino/issues/18499", match = ".*SqlQueryManager.getFullQueryInfo.*")
     @Test(dataProvider = "fixedJoinDistributionTypes")
     public void testDynamicFiltering(JoinDistributionType joinDistributionType)
     {
@@ -1891,6 +2055,7 @@ public abstract class BaseJdbcConnectorTest
                 joinDistributionType);
     }
 
+    @Flaky(issue = "https://github.com/trinodb/trino/issues/18499", match = ".*SqlQueryManager.getFullQueryInfo.*")
     @Test
     public void testDynamicFilteringWithAggregationGroupingColumn()
     {
@@ -1901,6 +2066,7 @@ public abstract class BaseJdbcConnectorTest
                 PARTITIONED);
     }
 
+    @Flaky(issue = "https://github.com/trinodb/trino/issues/18499", match = ".*SqlQueryManager.getFullQueryInfo.*")
     @Test
     public void testDynamicFilteringWithAggregationAggregateColumn()
     {
@@ -1917,6 +2083,7 @@ public abstract class BaseJdbcConnectorTest
                 isAggregationPushedDown);
     }
 
+    @Flaky(issue = "https://github.com/trinodb/trino/issues/18499", match = ".*SqlQueryManager.getFullQueryInfo.*")
     @Test
     public void testDynamicFilteringWithAggregationGroupingSet()
     {
@@ -1927,6 +2094,7 @@ public abstract class BaseJdbcConnectorTest
                         "ON a.orderkey = b.orderkey AND b.totalprice < 1000");
     }
 
+    @Flaky(issue = "https://github.com/trinodb/trino/issues/18499", match = ".*SqlQueryManager.getFullQueryInfo.*")
     @Test
     public void testDynamicFilteringWithLimit()
     {
@@ -1937,6 +2105,7 @@ public abstract class BaseJdbcConnectorTest
                         "ON a.orderkey = b.orderkey AND b.totalprice < 1000");
     }
 
+    @Flaky(issue = "https://github.com/trinodb/trino/issues/18499", match = ".*SqlQueryManager.getFullQueryInfo.*")
     @Test
     public void testDynamicFilteringDomainCompactionThreshold()
     {
@@ -2065,8 +2234,14 @@ public abstract class BaseJdbcConnectorTest
                 .build();
     }
 
+    /**
+     * This method relies on global state of QueryTracker. It may fail because of QueryTracker.pruneExpiredQueries()
+     * You must ensure that query was issued and this method invoked in isolation -
+     * which guarantees that there is less other queries between query creation and obtaining query info than `query.max-history`
+     */
     private long getPhysicalInputPositions(QueryId queryId)
     {
+        // TODO https://github.com/trinodb/trino/issues/18499
         return getDistributedQueryRunner().getCoordinator()
                 .getQueryManager()
                 .getFullQueryInfo(queryId)

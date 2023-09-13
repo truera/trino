@@ -61,6 +61,9 @@ public class TestHiveCoercionOnUnpartitionedTable
                             bigint_to_varchar                  BIGINT,
                             float_to_double                    FLOAT,
                             double_to_float                    DOUBLE,
+                            double_to_string                   DOUBLE,
+                            double_to_bounded_varchar          DOUBLE,
+                            double_infinity_to_string          DOUBLE,
                             shortdecimal_to_shortdecimal       DECIMAL(10,2),
                             shortdecimal_to_longdecimal        DECIMAL(10,2),
                             longdecimal_to_shortdecimal        DECIMAL(20,12),
@@ -80,6 +83,8 @@ public class TestHiveCoercionOnUnpartitionedTable
                             timestamp_to_string                TIMESTAMP,
                             timestamp_to_bounded_varchar       TIMESTAMP,
                             timestamp_to_smaller_varchar       TIMESTAMP,
+                            smaller_varchar_to_timestamp       VARCHAR(4),
+                            varchar_to_timestamp               STRING,
                             id                                 BIGINT)
                        STORED AS\s""" + fileFormat);
     }
@@ -90,9 +95,11 @@ public class TestHiveCoercionOnUnpartitionedTable
         return HiveTableDefinition.builder(tableName)
                 .setCreateTableDDLTemplate("""
                          CREATE TABLE %NAME%(
-                             timestamp_row_to_row       STRUCT<keep: TIMESTAMP, si2i: SMALLINT>,
-                             timestamp_list_to_list     ARRAY<STRUCT<keep: TIMESTAMP, si2i: SMALLINT>>,
-                             timestamp_map_to_map       MAP<SMALLINT, STRUCT<keep: TIMESTAMP, si2i: SMALLINT>>,
+                             timestamp_row_to_row       STRUCT<keep: TIMESTAMP, si2i: SMALLINT, timestamp2string: TIMESTAMP, string2timestamp: STRING>,
+                             timestamp_list_to_list     ARRAY<STRUCT<keep: TIMESTAMP, si2i: SMALLINT, timestamp2string: TIMESTAMP, string2timestamp: STRING>>,
+                             timestamp_map_to_map       MAP<SMALLINT, STRUCT<keep: TIMESTAMP, si2i: SMALLINT, timestamp2string: TIMESTAMP, string2timestamp: STRING>>,
+                             timestamp_to_string        TIMESTAMP,
+                             string_to_timestamp        STRING,
                              id                         BIGINT)
                         STORED AS\s""" + fileFormat);
     }
@@ -146,6 +153,9 @@ public class TestHiveCoercionOnUnpartitionedTable
                 .put(columnContext("orc", "long_decimal_to_varchar"), "Cannot read SQL type 'varchar' from ORC stream '.long_decimal_to_varchar' of type DECIMAL")
                 .put(columnContext("orc", "short_decimal_to_bounded_varchar"), "Cannot read SQL type 'varchar(30)' from ORC stream '.short_decimal_to_bounded_varchar' of type DECIMAL")
                 .put(columnContext("orc", "long_decimal_to_bounded_varchar"), "Cannot read SQL type 'varchar(30)' from ORC stream '.long_decimal_to_bounded_varchar' of type DECIMAL")
+                .put(columnContext("orc", "timestamp_row_to_row"), "Cannot read SQL type 'varchar' from ORC stream '.timestamp_row_to_row.timestamp2string' of type TIMESTAMP with attributes {}")
+                .put(columnContext("orc", "timestamp_list_to_list"), "Cannot read SQL type 'varchar' from ORC stream '.timestamp_row_to_row.timestamp2string' of type TIMESTAMP with attributes {}")
+                .put(columnContext("orc", "timestamp_map_to_map"), "Cannot read SQL type 'varchar' from ORC stream '.timestamp_row_to_row.timestamp2string' of type TIMESTAMP with attributes {}")
                 .buildOrThrow();
     }
 }

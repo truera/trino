@@ -20,6 +20,7 @@ import io.trino.plugin.hive.HiveColumnHandle;
 import io.trino.plugin.hive.HivePartitionKey;
 import io.trino.plugin.hive.HiveSplit;
 import io.trino.plugin.hive.HiveSplit.BucketConversion;
+import io.trino.plugin.hive.HiveStorageFormat;
 import io.trino.plugin.hive.InternalHiveSplit;
 import io.trino.plugin.hive.InternalHiveSplit.InternalHiveBlock;
 import io.trino.plugin.hive.TableToPartitionMapping;
@@ -28,17 +29,10 @@ import io.trino.plugin.hive.fs.TrinoFileStatus;
 import io.trino.plugin.hive.orc.OrcPageSourceFactory;
 import io.trino.plugin.hive.parquet.ParquetPageSourceFactory;
 import io.trino.plugin.hive.rcfile.RcFilePageSourceFactory;
-import io.trino.plugin.hive.s3select.S3SelectPushdown;
 import io.trino.spi.HostAddress;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.mapred.FileSplit;
-import org.apache.hadoop.mapred.InputFormat;
 
-import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -51,14 +45,12 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.airlift.slice.Slices.utf8Slice;
 import static io.trino.plugin.hive.HiveColumnHandle.isPathColumnHandle;
-import static io.trino.plugin.hive.util.HiveUtil.isSplittable;
 import static java.util.Objects.requireNonNull;
 
 public class InternalHiveSplitFactory
 {
-    private final FileSystem fileSystem;
     private final String partitionName;
-    private final InputFormat<?, ?> inputFormat;
+    private final HiveStorageFormat storageFormat;
     private final Properties strippedSchema;
     private final List<HivePartitionKey> partitionKeys;
     private final Optional<Domain> pathDomain;
@@ -69,12 +61,10 @@ public class InternalHiveSplitFactory
     private final long minimumTargetSplitSizeInBytes;
     private final Optional<Long> maxSplitFileSize;
     private final boolean forceLocalScheduling;
-    private final boolean s3SelectPushdownEnabled;
 
     public InternalHiveSplitFactory(
-            FileSystem fileSystem,
             String partitionName,
-            InputFormat<?, ?> inputFormat,
+            HiveStorageFormat storageFormat,
             Properties schema,
             List<HivePartitionKey> partitionKeys,
             TupleDomain<HiveColumnHandle> effectivePredicate,
@@ -84,12 +74,10 @@ public class InternalHiveSplitFactory
             Optional<HiveSplit.BucketValidation> bucketValidation,
             DataSize minimumTargetSplitSize,
             boolean forceLocalScheduling,
-            boolean s3SelectPushdownEnabled,
             Optional<Long> maxSplitFileSize)
     {
-        this.fileSystem = requireNonNull(fileSystem, "fileSystem is null");
         this.partitionName = requireNonNull(partitionName, "partitionName is null");
-        this.inputFormat = requireNonNull(inputFormat, "inputFormat is null");
+        this.storageFormat = requireNonNull(storageFormat, "storageFormat is null");
         this.strippedSchema = stripUnnecessaryProperties(requireNonNull(schema, "schema is null"));
         this.partitionKeys = requireNonNull(partitionKeys, "partitionKeys is null");
         pathDomain = getPathDomain(requireNonNull(effectivePredicate, "effectivePredicate is null"));
@@ -98,7 +86,6 @@ public class InternalHiveSplitFactory
         this.bucketConversion = requireNonNull(bucketConversion, "bucketConversion is null");
         this.bucketValidation = requireNonNull(bucketValidation, "bucketValidation is null");
         this.forceLocalScheduling = forceLocalScheduling;
-        this.s3SelectPushdownEnabled = s3SelectPushdownEnabled;
         this.minimumTargetSplitSizeInBytes = minimumTargetSplitSize.toBytes();
         this.maxSplitFileSize = requireNonNull(maxSplitFileSize, "maxSplitFileSize is null");
         checkArgument(minimumTargetSplitSizeInBytes > 0, "minimumTargetSplitSize must be > 0, found: %s", minimumTargetSplitSize);
@@ -122,7 +109,7 @@ public class InternalHiveSplitFactory
     {
         splittable = splittable &&
                 status.getLength() > minimumTargetSplitSizeInBytes &&
-                isSplittable(inputFormat, fileSystem, new Path(status.getPath()));
+                storageFormat.isSplittable(status.getPath());
         return createInternalHiveSplit(
                 status.getPath(),
                 status.getBlockLocations(),
@@ -134,23 +121,6 @@ public class InternalHiveSplitFactory
                 tableBucketNumber,
                 splittable,
                 acidInfo);
-    }
-
-    public Optional<InternalHiveSplit> createInternalHiveSplit(FileSplit split)
-            throws IOException
-    {
-        FileStatus file = fileSystem.getFileStatus(split.getPath());
-        return createInternalHiveSplit(
-                split.getPath().toString(),
-                BlockLocation.fromHiveBlockLocations(fileSystem.getFileBlockLocations(file, split.getStart(), split.getLength())),
-                split.getStart(),
-                split.getLength(),
-                file.getLen(),
-                file.getModificationTime(),
-                OptionalInt.empty(),
-                OptionalInt.empty(),
-                false,
-                Optional.empty());
     }
 
     private Optional<InternalHiveSplit> createInternalHiveSplit(
@@ -225,7 +195,6 @@ public class InternalHiveSplitFactory
                 tableToPartitionMapping,
                 bucketConversion,
                 bucketValidation,
-                s3SelectPushdownEnabled && S3SelectPushdown.isCompressionCodecSupported(inputFormat, path),
                 acidInfo,
                 partitionMatchSupplier));
     }

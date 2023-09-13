@@ -31,7 +31,7 @@ import io.trino.spi.type.TimeZoneKey;
 import io.trino.sql.tree.QualifiedName;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -241,7 +241,7 @@ public class TestHistogram
         BlockBuilder blockBuilder = function.getFinalType().createBlockBuilder(null, 1000);
 
         groupedAggregator.evaluate(0, blockBuilder);
-        assertTrue(blockBuilder.isNull(0));
+        assertTrue(blockBuilder.build().isNull(0));
     }
 
     @Test

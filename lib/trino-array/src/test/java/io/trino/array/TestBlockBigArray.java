@@ -15,10 +15,10 @@ package io.trino.array;
 
 import io.trino.spi.block.Block;
 import io.trino.spi.block.IntArrayBlockBuilder;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import static io.airlift.slice.SizeOf.instanceSize;
-import static org.testng.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestBlockBigArray
 {
@@ -46,7 +46,7 @@ public class TestBlockBigArray
         long expectedSize = instanceSize(BlockBigArray.class)
                 + referenceCountMap.sizeOf()
                 + (new ObjectBigArray<>()).sizeOf()
-                + block.getRetainedSizeInBytes() + (arraySize - 1) * instanceSize(block.getClass());
-        assertEquals(blockBigArray.sizeOf(), expectedSize);
+                + block.getRetainedSizeInBytes() + (arraySize - 1L) * instanceSize(block.getClass());
+        assertThat(blockBigArray.sizeOf()).isEqualTo(expectedSize);
     }
 }

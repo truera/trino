@@ -23,7 +23,7 @@ import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.SqlDate;
 import io.trino.sql.tree.QualifiedName;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -146,7 +146,7 @@ public class TestArrayAggregation
         BlockBuilder blockBuilder = bigIntAgg.getFinalType().createBlockBuilder(null, 1000);
 
         groupedAggregator.evaluate(0, blockBuilder);
-        assertTrue(blockBuilder.isNull(0));
+        assertTrue(blockBuilder.build().isNull(0));
     }
 
     @Test

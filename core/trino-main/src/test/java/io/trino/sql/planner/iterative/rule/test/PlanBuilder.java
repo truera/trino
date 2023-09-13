@@ -33,6 +33,7 @@ import io.trino.spi.connector.CatalogHandle;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SortOrder;
+import io.trino.spi.connector.WriterScalingOptions;
 import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.Type;
@@ -71,6 +72,7 @@ import io.trino.sql.planner.plan.IntersectNode;
 import io.trino.sql.planner.plan.JoinNode;
 import io.trino.sql.planner.plan.LimitNode;
 import io.trino.sql.planner.plan.MarkDistinctNode;
+import io.trino.sql.planner.plan.MergeProcessorNode;
 import io.trino.sql.planner.plan.MergeWriterNode;
 import io.trino.sql.planner.plan.OffsetNode;
 import io.trino.sql.planner.plan.OutputNode;
@@ -375,7 +377,11 @@ public class PlanBuilder
                 .flatMap(Collection::stream)
                 .distinct()
                 .collect(toImmutableMap(identity(), identity()));
+        return groupId(groupingSets, groupingColumns, aggregationArguments, groupIdSymbol, source);
+    }
 
+    public GroupIdNode groupId(List<List<Symbol>> groupingSets, Map<Symbol, Symbol> groupingColumns, List<Symbol> aggregationArguments, Symbol groupIdSymbol, PlanNode source)
+    {
         return new GroupIdNode(
                 idAllocator.getNextId(),
                 source,
@@ -712,7 +718,7 @@ public class PlanBuilder
                 rowCountSymbol);
     }
 
-    public CreateTarget createTarget(CatalogHandle catalogHandle, SchemaTableName schemaTableName, boolean multipleWritersPerPartitionSupported, OptionalInt maxWriterTasks)
+    public CreateTarget createTarget(CatalogHandle catalogHandle, SchemaTableName schemaTableName, boolean multipleWritersPerPartitionSupported, OptionalInt maxWriterTasks, WriterScalingOptions writerScalingOptions)
     {
         OutputTableHandle tableHandle = new OutputTableHandle(
                 catalogHandle,
@@ -723,26 +729,50 @@ public class PlanBuilder
                 tableHandle,
                 schemaTableName,
                 multipleWritersPerPartitionSupported,
-                maxWriterTasks);
+                maxWriterTasks,
+                writerScalingOptions);
     }
 
-    public CreateTarget createTarget(CatalogHandle catalogHandle, SchemaTableName schemaTableName, boolean multipleWritersPerPartitionSupported)
+    public CreateTarget createTarget(CatalogHandle catalogHandle, SchemaTableName schemaTableName, boolean multipleWritersPerPartitionSupported, WriterScalingOptions writerScalingOptions)
     {
-        return createTarget(catalogHandle, schemaTableName, multipleWritersPerPartitionSupported, OptionalInt.empty());
+        return createTarget(catalogHandle, schemaTableName, multipleWritersPerPartitionSupported, OptionalInt.empty(), writerScalingOptions);
     }
 
     public MergeWriterNode merge(SchemaTableName schemaTableName, PlanNode mergeSource, Symbol mergeRow, Symbol rowId, List<Symbol> outputs)
     {
+        return merge(mergeSource, mergeTarget(schemaTableName), mergeRow, rowId, outputs);
+    }
+
+    public MergeWriterNode merge(PlanNode mergeSource, MergeTarget target, Symbol mergeRow, Symbol rowId, List<Symbol> outputs)
+    {
         return new MergeWriterNode(
                 idAllocator.getNextId(),
                 mergeSource,
-                mergeTarget(schemaTableName),
+                target,
                 ImmutableList.of(mergeRow, rowId),
                 Optional.empty(),
                 outputs);
     }
 
-    private MergeTarget mergeTarget(SchemaTableName schemaTableName)
+    public MergeProcessorNode mergeProcessor(SchemaTableName schemaTableName, PlanNode source, Symbol mergeRow, Symbol rowId, List<Symbol> dataColumnSymbols, List<Symbol> redistributionColumnSymbols, List<Symbol> outputs)
+    {
+        return new MergeProcessorNode(
+                idAllocator.getNextId(),
+                source,
+                mergeTarget(schemaTableName),
+                rowId,
+                mergeRow,
+                dataColumnSymbols,
+                redistributionColumnSymbols,
+                outputs);
+    }
+
+    public MergeTarget mergeTarget(SchemaTableName schemaTableName)
+    {
+        return mergeTarget(schemaTableName, new MergeParadigmAndTypes(Optional.of(DELETE_ROW_AND_INSERT_ROW), ImmutableList.of(), ImmutableList.of(), INTEGER));
+    }
+
+    public MergeTarget mergeTarget(SchemaTableName schemaTableName, MergeParadigmAndTypes mergeParadigmAndTypes)
     {
         return new MergeTarget(
                 new TableHandle(
@@ -751,7 +781,7 @@ public class PlanBuilder
                         TestingTransactionHandle.create()),
                 Optional.empty(),
                 schemaTableName,
-                new MergeParadigmAndTypes(Optional.of(DELETE_ROW_AND_INSERT_ROW), ImmutableList.of(), ImmutableList.of(), INTEGER));
+                mergeParadigmAndTypes);
     }
 
     public ExchangeNode gatheringExchange(ExchangeNode.Scope scope, PlanNode child)
@@ -1202,7 +1232,8 @@ public class PlanBuilder
                                 TestingTransactionHandle.create(),
                                 new TestingTableExecuteHandle()),
                         Optional.empty(),
-                        new SchemaTableName("schemaName", "tableName")),
+                        new SchemaTableName("schemaName", "tableName"),
+                        WriterScalingOptions.DISABLED),
                 symbol("partialrows", BIGINT),
                 symbol("fragment", VARBINARY),
                 columns,

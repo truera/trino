@@ -113,6 +113,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class TestAccessControl
         extends AbstractTestQueryFramework
 {
+    private static final String DEFAULT_SCHEMA = "default";
+    private static final String REDIRECTED_SOURCE = "redirected_source";
+    private static final String REDIRECTED_TARGET = "redirected_target";
     private final AtomicReference<SystemAccessControl> systemAccessControl = new AtomicReference<>(new DefaultSystemAccessControl());
     private final TestingGroupProvider groupProvider = new TestingGroupProvider();
     private TestingSystemSecurityMetadata systemSecurityMetadata;
@@ -134,7 +137,8 @@ public class TestAccessControl
                             .in(Scopes.SINGLETON);
                 })
                 .setNodeCount(1)
-                .setSystemAccessControl(new ForwardingSystemAccessControl() {
+                .setSystemAccessControl(new ForwardingSystemAccessControl()
+                {
                     @Override
                     protected SystemAccessControl delegate()
                     {
@@ -156,9 +160,16 @@ public class TestAccessControl
                     }
                     return new MockConnectorTableHandle(schemaTableName);
                 })
+                .withListSchemaNames((connectorSession -> ImmutableList.of(DEFAULT_SCHEMA)))
+                .withListTables((connectorSession, schemaName) -> {
+                    if (schemaName.equals(DEFAULT_SCHEMA)) {
+                        return ImmutableList.of(REDIRECTED_SOURCE);
+                    }
+                    return ImmutableList.of();
+                })
                 .withGetViews((connectorSession, prefix) -> {
                     ConnectorViewDefinition definitionRunAsDefiner = new ConnectorViewDefinition(
-                            "select 1",
+                            "SELECT 1 AS test",
                             Optional.of("mock"),
                             Optional.of("default"),
                             ImmutableList.of(new ConnectorViewDefinition.ViewColumn("test", BIGINT.getTypeId(), Optional.empty())),
@@ -166,7 +177,7 @@ public class TestAccessControl
                             Optional.of("admin"),
                             false);
                     ConnectorViewDefinition definitionRunAsInvoker = new ConnectorViewDefinition(
-                            "select 1",
+                            "SELECT 1 AS test",
                             Optional.of("mock"),
                             Optional.of("default"),
                             ImmutableList.of(new ConnectorViewDefinition.ViewColumn("test", BIGINT.getTypeId(), Optional.empty())),
@@ -177,12 +188,13 @@ public class TestAccessControl
                             new SchemaTableName("default", "test_view_definer"), definitionRunAsDefiner,
                             new SchemaTableName("default", "test_view_invoker"), definitionRunAsInvoker);
                 })
-                .withGetMaterializedViews(new BiFunction<ConnectorSession, SchemaTablePrefix, Map<SchemaTableName, ConnectorMaterializedViewDefinition>>() {
+                .withGetMaterializedViews(new BiFunction<ConnectorSession, SchemaTablePrefix, Map<SchemaTableName, ConnectorMaterializedViewDefinition>>()
+                {
                     @Override
                     public Map<SchemaTableName, ConnectorMaterializedViewDefinition> apply(ConnectorSession session, SchemaTablePrefix schemaTablePrefix)
                     {
                         ConnectorMaterializedViewDefinition materializedViewDefinition = new ConnectorMaterializedViewDefinition(
-                                "select 1",
+                                "SELECT 1 AS test",
                                 Optional.empty(),
                                 Optional.empty(),
                                 Optional.empty(),
@@ -210,6 +222,19 @@ public class TestAccessControl
                 .withColumnProperties(() -> ImmutableList.of(
                         integerProperty("another_property", "description", 0, false),
                         stringProperty("string_column_property", "description", "", false)))
+                .withRedirectTable(((connectorSession, schemaTableName) -> {
+                    if (schemaTableName.equals(SchemaTableName.schemaTableName(DEFAULT_SCHEMA, REDIRECTED_SOURCE))) {
+                        return Optional.of(
+                                new CatalogSchemaTableName("mock", SchemaTableName.schemaTableName(DEFAULT_SCHEMA, REDIRECTED_TARGET)));
+                    }
+                    return Optional.empty();
+                }))
+                .withGetComment((schemaTableName -> {
+                    if (schemaTableName.getTableName().equals(REDIRECTED_TARGET)) {
+                        return Optional.of("this is a redirected table");
+                    }
+                    return Optional.empty();
+                }))
                 .build()));
         queryRunner.createCatalog("mock", "mock");
         queryRunner.installPlugin(new JdbcPlugin("base_jdbc", new TestingH2JdbcModule()));
@@ -253,6 +278,26 @@ public class TestAccessControl
         assertAccessAllowed("SELECT name AS my_alias FROM nation", privilege("my_alias", SELECT_COLUMN));
         assertAccessAllowed("SELECT my_alias from (SELECT name AS my_alias FROM nation)", privilege("my_alias", SELECT_COLUMN));
         assertAccessDenied("SELECT name AS my_alias FROM nation", "Cannot select from columns \\[name] in table .*.nation.*", privilege("nation.name", SELECT_COLUMN));
+        assertAccessAllowed("SELECT 1 FROM mock.default.test_materialized_view");
+        assertAccessDenied("SELECT 1 FROM mock.default.test_materialized_view", "Cannot select from columns.*", privilege("test_materialized_view", SELECT_COLUMN));
+        assertAccessAllowed("SELECT * FROM mock.default.test_materialized_view");
+        assertAccessDenied("SELECT * FROM mock.default.test_materialized_view", "Cannot select from columns.*", privilege("test_materialized_view", SELECT_COLUMN));
+        assertAccessAllowed("SELECT 1 FROM mock.default.test_view_definer");
+        assertAccessDenied("SELECT 1 FROM mock.default.test_view_definer", "Cannot select from columns.*", privilege("test_view_definer", SELECT_COLUMN));
+        assertAccessAllowed("SELECT * FROM mock.default.test_view_definer");
+        assertAccessDenied("SELECT * FROM mock.default.test_view_definer", "Cannot select from columns.*", privilege("test_view_definer", SELECT_COLUMN));
+        assertAccessAllowed("SELECT 1 FROM mock.default.test_view_invoker");
+        assertAccessDenied("SELECT 1 FROM mock.default.test_view_invoker", "Cannot select from columns.*", privilege("test_view_invoker", SELECT_COLUMN));
+        assertAccessAllowed("SELECT * FROM mock.default.test_view_invoker");
+        assertAccessDenied("SELECT * FROM mock.default.test_view_invoker", "Cannot select from columns.*", privilege("test_view_invoker", SELECT_COLUMN));
+        // with current implementation this next block of checks is redundant to `SELECT 1 FROM ..`, but it is not obvious unless details of how
+        // semantics analyzer works are known
+        assertAccessAllowed("SELECT count(*) FROM mock.default.test_materialized_view");
+        assertAccessDenied("SELECT count(*) FROM mock.default.test_materialized_view", "Cannot select from columns.*", privilege("test_materialized_view", SELECT_COLUMN));
+        assertAccessAllowed("SELECT count(*) FROM mock.default.test_view_invoker");
+        assertAccessDenied("SELECT count(*) FROM mock.default.test_view_invoker", "Cannot select from columns.*", privilege("test_view_invoker", SELECT_COLUMN));
+        assertAccessAllowed("SELECT count(*) FROM mock.default.test_view_definer");
+        assertAccessDenied("SELECT count(*) FROM mock.default.test_view_definer", "Cannot select from columns.*", privilege("test_view_definer", SELECT_COLUMN));
 
         assertAccessDenied(
                 "SELECT orders.custkey, lineitem.quantity FROM orders JOIN lineitem USING (orderkey)",
@@ -541,13 +586,33 @@ public class TestAccessControl
     }
 
     @Test
+    public void testMetadataFilterColumns()
+    {
+        getQueryRunner().getAccessControl().deny(privilege("nation.regionkey", SELECT_COLUMN));
+
+        assertThat(query("SELECT column_name FROM information_schema.columns WHERE table_catalog = CURRENT_CATALOG AND table_schema = CURRENT_SCHEMA and table_name = 'nation'"))
+                .matches("VALUES VARCHAR 'nationkey', 'name', 'comment'");
+
+        assertThat(query("SELECT column_name FROM system.jdbc.columns WHERE table_cat = CURRENT_CATALOG AND table_schem = CURRENT_SCHEMA and table_name = 'nation'"))
+                .matches("VALUES VARCHAR 'nationkey', 'name', 'comment'");
+    }
+
+    @Test
     public void testCommentView()
     {
         String viewName = "comment_view" + randomNameSuffix();
         assertUpdate("CREATE VIEW " + viewName + " COMMENT 'old comment' AS SELECT * FROM orders");
         assertAccessDenied("COMMENT ON VIEW " + viewName + " IS 'new comment'", "Cannot comment view to .*", privilege(viewName, COMMENT_VIEW));
-        assertThatThrownBy(() -> getQueryRunner().execute(getSession(), "COMMENT ON VIEW " + viewName + " IS 'new comment'"))
-                .hasMessageContaining("This connector does not support setting view comments");
+        assertAccessAllowed("COMMENT ON VIEW " + viewName + " IS 'new comment'");
+    }
+
+    @Test
+    public void testCommentOnRedirectedTable()
+    {
+        String query = "SELECT * FROM system.metadata.table_comments WHERE catalog_name = 'mock' AND schema_name = 'default' AND table_name LIKE 'redirected%'";
+        assertQuery(query, "VALUES ('mock', 'default', 'redirected_source', 'this is a redirected table')");
+        getQueryRunner().getAccessControl().denyTables(schemaTableName -> !schemaTableName.getTableName().equals("redirected_target"));
+        assertQueryReturnsEmptyResult(query);
     }
 
     @Test(dataProviderClass = DataProviders.class, dataProvider = "trueFalse")
@@ -588,6 +653,15 @@ public class TestAccessControl
         assertUpdate("CREATE VIEW " + viewName + " AS SELECT * FROM orders");
         assertAccessDenied("COMMENT ON COLUMN " + viewName + ".orderkey IS 'new order key comment'", "Cannot comment column to .*", privilege(viewName, COMMENT_COLUMN));
         assertUpdate(getSession(), "COMMENT ON COLUMN " + viewName + ".orderkey IS 'new comment'");
+    }
+
+    @Test
+    public void testCommentColumnMaterializedView()
+    {
+        String viewName = "comment_materialized_view" + randomNameSuffix();
+        assertUpdate("CREATE MATERIALIZED VIEW mock.default." + viewName + " AS SELECT * FROM orders");
+        assertAccessDenied("COMMENT ON COLUMN mock.default." + viewName + ".column_0 IS 'new comment'", "Cannot comment column to .*", privilege(viewName, COMMENT_COLUMN));
+        assertUpdate(getSession(), "COMMENT ON COLUMN mock.default." + viewName + ".column_0 IS 'new comment'");
     }
 
     @Test

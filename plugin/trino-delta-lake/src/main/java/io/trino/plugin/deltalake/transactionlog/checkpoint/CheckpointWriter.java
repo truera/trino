@@ -14,6 +14,7 @@
 package io.trino.plugin.deltalake.transactionlog.checkpoint;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import io.trino.filesystem.TrinoOutputFile;
 import io.trino.parquet.writer.ParquetSchemaConverter;
@@ -66,7 +67,6 @@ import static io.trino.plugin.deltalake.transactionlog.MetadataEntry.DELTA_CHECK
 import static io.trino.spi.type.Timestamps.MICROSECONDS_PER_MILLISECOND;
 import static io.trino.spi.type.TypeUtils.writeNativeValue;
 import static java.lang.Math.multiplyExact;
-import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 
@@ -84,12 +84,20 @@ public class CheckpointWriter
     private final TypeManager typeManager;
     private final CheckpointSchemaManager checkpointSchemaManager;
     private final String trinoVersion;
+    private final ParquetWriterOptions parquetWriterOptions;
 
     public CheckpointWriter(TypeManager typeManager, CheckpointSchemaManager checkpointSchemaManager, String trinoVersion)
+    {
+        this(typeManager, checkpointSchemaManager, trinoVersion, ParquetWriterOptions.builder().build());
+    }
+
+    @VisibleForTesting
+    public CheckpointWriter(TypeManager typeManager, CheckpointSchemaManager checkpointSchemaManager, String trinoVersion, ParquetWriterOptions parquetWriterOptions)
     {
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
         this.checkpointSchemaManager = requireNonNull(checkpointSchemaManager, "checkpointSchemaManager is null");
         this.trinoVersion = requireNonNull(trinoVersion, "trinoVersion is null");
+        this.parquetWriterOptions = requireNonNull(parquetWriterOptions, "parquetWriterOptions is null");
     }
 
     public void write(CheckpointEntries entries, TrinoOutputFile outputFile)
@@ -127,10 +135,9 @@ public class CheckpointWriter
                 outputFile.create(),
                 schemaConverter.getMessageType(),
                 schemaConverter.getPrimitiveTypes(),
-                ParquetWriterOptions.builder().build(),
+                parquetWriterOptions,
                 CompressionCodec.SNAPPY,
                 trinoVersion,
-                false,
                 Optional.of(DateTimeZone.UTC),
                 Optional.empty());
 
@@ -387,7 +394,7 @@ public class CheckpointWriter
                             .collect(toMap(
                                     Map.Entry::getKey,
                                     entry -> {
-                                        Type type = fieldTypes.get(entry.getKey().toLowerCase(ENGLISH));
+                                        Type type = fieldTypes.get(entry.getKey());
                                         Object value = entry.getValue();
                                         if (isJson) {
                                             return jsonValueToTrinoValue(type, value);

@@ -168,7 +168,7 @@ public class TestCachingJdbcClient
                 .afterRunning(() -> {
                     assertThat(cachingJdbcClient.getSchemaNames(SESSION)).contains(phantomSchema);
                 });
-        jdbcClient.dropSchema(SESSION, phantomSchema);
+        jdbcClient.dropSchema(SESSION, phantomSchema, false);
 
         assertThat(jdbcClient.getSchemaNames(SESSION)).doesNotContain(phantomSchema);
         assertSchemaNamesCache(cachingJdbcClient)
@@ -652,7 +652,8 @@ public class TestCachingJdbcClient
                 Optional.empty(),
                 Optional.of(Set.of(new SchemaTableName(schema, "first"))),
                 0,
-                Optional.empty());
+                Optional.empty(),
+                ImmutableList.of());
 
         // load
         assertStatisticsCacheStats(cachingJdbcClient).loads(1).misses(1).afterRunning(() -> {
@@ -853,7 +854,7 @@ public class TestCachingJdbcClient
                 assertThat(cachingJdbcClient.getSchemaNames(session)).doesNotContain(schemaName);
                 cachingJdbcClient.createSchema(session, schemaName);
                 assertThat(cachingJdbcClient.getSchemaNames(session)).contains(schemaName);
-                cachingJdbcClient.dropSchema(session, schemaName);
+                cachingJdbcClient.dropSchema(session, schemaName, false);
                 assertThat(cachingJdbcClient.getSchemaNames(session)).doesNotContain(schemaName);
                 return null;
             }));
@@ -1026,7 +1027,7 @@ public class TestCachingJdbcClient
 
         jdbcClient.dropTable(SESSION, first);
         jdbcClient.dropTable(SESSION, second);
-        jdbcClient.dropSchema(SESSION, secondSchema);
+        jdbcClient.dropSchema(SESSION, secondSchema, false);
     }
 
     private JdbcTableHandle getAnyTable(String schema)
