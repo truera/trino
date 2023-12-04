@@ -36,7 +36,9 @@ import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-@DefunctConfig("delta.experimental.ignore-checkpoint-write-failures")
+@DefunctConfig({
+        "delta.experimental.ignore-checkpoint-write-failures",
+        "delta.legacy-create-table-with-existing-location.enabled"})
 public class DeltaLakeConfig
 {
     public static final String EXTENDED_STATISTICS_ENABLED = "delta.extended-statistics.enabled";
@@ -62,6 +64,7 @@ public class DeltaLakeConfig
     private boolean unsafeWritesEnabled;
     private boolean checkpointRowStatisticsWritingEnabled = true;
     private long defaultCheckpointWritingInterval = 10;
+    private boolean checkpointFilteringEnabled;
     private Duration vacuumMinRetention = new Duration(7, DAYS);
     private Optional<String> hiveCatalogName = Optional.empty();
     private Duration dynamicFilteringWaitTimeout = new Duration(0, SECONDS);
@@ -74,7 +77,6 @@ public class DeltaLakeConfig
     private String parquetTimeZone = TimeZone.getDefault().getID();
     private DataSize targetMaxFileSize = DataSize.of(1, GIGABYTE);
     private boolean uniqueTableLocation = true;
-    private boolean legacyCreateTableWithExistingLocationEnabled;
     private boolean registerTableProcedureEnabled;
     private boolean projectionPushdownEnabled = true;
     private boolean queryPartitionFilterRequired;
@@ -269,6 +271,18 @@ public class DeltaLakeConfig
         return defaultCheckpointWritingInterval;
     }
 
+    public boolean isCheckpointPartitionFilterEnabled()
+    {
+        return checkpointFilteringEnabled;
+    }
+
+    @Config("delta.checkpoint-filtering.enabled")
+    public DeltaLakeConfig setCheckpointPartitionFilterEnabled(boolean checkpointFilteringEnabled)
+    {
+        this.checkpointFilteringEnabled = checkpointFilteringEnabled;
+        return this;
+    }
+
     @NotNull
     public Duration getVacuumMinRetention()
     {
@@ -446,21 +460,6 @@ public class DeltaLakeConfig
     public DeltaLakeConfig setUniqueTableLocation(boolean uniqueTableLocation)
     {
         this.uniqueTableLocation = uniqueTableLocation;
-        return this;
-    }
-
-    @Deprecated
-    public boolean isLegacyCreateTableWithExistingLocationEnabled()
-    {
-        return legacyCreateTableWithExistingLocationEnabled;
-    }
-
-    @Deprecated
-    @Config("delta.legacy-create-table-with-existing-location.enabled")
-    @ConfigDescription("Enable using the CREATE TABLE statement to register an existing table")
-    public DeltaLakeConfig setLegacyCreateTableWithExistingLocationEnabled(boolean legacyCreateTableWithExistingLocationEnabled)
-    {
-        this.legacyCreateTableWithExistingLocationEnabled = legacyCreateTableWithExistingLocationEnabled;
         return this;
     }
 

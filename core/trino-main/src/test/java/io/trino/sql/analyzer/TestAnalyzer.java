@@ -22,6 +22,7 @@ import io.opentelemetry.api.OpenTelemetry;
 import io.trino.FeaturesConfig;
 import io.trino.Session;
 import io.trino.SystemSessionProperties;
+import io.trino.client.NodeVersion;
 import io.trino.connector.CatalogServiceProvider;
 import io.trino.connector.MockConnectorFactory;
 import io.trino.connector.StaticConnectorFactory;
@@ -82,7 +83,6 @@ import io.trino.spi.type.RowType;
 import io.trino.spi.type.Type;
 import io.trino.sql.PlannerContext;
 import io.trino.sql.parser.ParsingException;
-import io.trino.sql.parser.ParsingOptions;
 import io.trino.sql.parser.SqlParser;
 import io.trino.sql.planner.OptimizerConfig;
 import io.trino.sql.rewrite.ShowQueriesRewrite;
@@ -102,6 +102,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.parallel.Execution;
 
 import java.time.Duration;
 import java.util.List;
@@ -179,6 +180,7 @@ import static io.trino.spi.StandardErrorCode.TOO_MANY_GROUPING_SETS;
 import static io.trino.spi.StandardErrorCode.TYPE_MISMATCH;
 import static io.trino.spi.StandardErrorCode.VIEW_IS_RECURSIVE;
 import static io.trino.spi.StandardErrorCode.VIEW_IS_STALE;
+import static io.trino.spi.connector.SaveMode.FAIL;
 import static io.trino.spi.session.PropertyMetadata.integerProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -193,8 +195,6 @@ import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.trino.spi.type.VarcharType.createVarcharType;
-import static io.trino.sql.parser.ParsingOptions.DecimalLiteralTreatment.AS_DECIMAL;
-import static io.trino.sql.parser.ParsingOptions.DecimalLiteralTreatment.AS_DOUBLE;
 import static io.trino.testing.TestingAccessControlManager.TestingPrivilegeType.SELECT_COLUMN;
 import static io.trino.testing.TestingAccessControlManager.privilege;
 import static io.trino.testing.TestingEventListenerManager.emptyEventListenerManager;
@@ -210,8 +210,10 @@ import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
+import static org.junit.jupiter.api.parallel.ExecutionMode.CONCURRENT;
 
 @TestInstance(PER_CLASS)
+@Execution(CONCURRENT)
 public class TestAnalyzer
 {
     private static final String TPCH_CATALOG = "tpch";
@@ -942,6 +944,14 @@ public class TestAnalyzer
         assertFails("SELECT * FROM foo FOR VERSION AS OF 'version1'")
                 .hasErrorCode(TABLE_NOT_FOUND)
                 .hasMessage("line 1:15: Table 'tpch.s1.foo' does not exist");
+        // table name containing dots
+        assertFails("SELECT * FROM \"table.not.existing\"")
+                .hasErrorCode(TABLE_NOT_FOUND)
+                .hasMessage("line 1:15: Table 'tpch.s1.\"table.not.existing\"' does not exist");
+        // table name containing whitespace
+        assertFails("SELECT * FROM \"table' does not exist, or maybe 'view\"")
+                .hasErrorCode(TABLE_NOT_FOUND)
+                .hasMessage("line 1:15: Table 'tpch.s1.\"table' does not exist, or maybe 'view\"' does not exist");
     }
 
     @Test
@@ -953,6 +963,10 @@ public class TestAnalyzer
         assertFails("SHOW TABLES IN NONEXISTENT_SCHEMA LIKE '%'")
                 .hasErrorCode(SCHEMA_NOT_FOUND)
                 .hasMessage("line 1:1: Schema 'nonexistent_schema' does not exist");
+        assertFails("SELECT * FROM \"a.b.c.d.e.\".\"f.g.h\" ")
+                .hasErrorCode(SCHEMA_NOT_FOUND)
+                // TODO like in TABLE_NOT_FOUND, the error message should include current catalog
+                .hasMessage("line 1:15: Schema 'a.b.c.d.e.' does not exist");
     }
 
     @Test
@@ -3922,6 +3936,26 @@ public class TestAnalyzer
     }
 
     @Test
+    public void testInvalidInlineFunction()
+    {
+        assertFails("WITH FUNCTION test.abc() RETURNS int RETURN 42 SELECT 123")
+                .hasErrorCode(SYNTAX_ERROR)
+                .hasMessage("line 1:6: Inline function names cannot be qualified: test.abc");
+
+        assertFails("WITH function abc() RETURNS int SECURITY DEFINER RETURN 42 SELECT 123")
+                .hasErrorCode(NOT_SUPPORTED)
+                .hasMessage("line 1:33: Security mode not supported for inline functions");
+
+        assertFails("""
+                CREATE VIEW test AS
+                WITH FUNCTION abc() RETURNS int RETURN 42
+                SELECT 123 x
+                """)
+                .hasErrorCode(NOT_SUPPORTED)
+                .hasMessage("line 2:6: Views cannot contain inline functions");
+    }
+
+    @Test
     public void testInvalidDelete()
     {
         assertFails("DELETE FROM foo")
@@ -4094,11 +4128,11 @@ public class TestAnalyzer
                 .hasMessage("line 1:29: Value expression and result of subquery must be of the same type: row(bigint) vs row(varchar(3))");
 
         // map is not orderable
-        assertFails(("SELECT map(ARRAY[1], ARRAY['hello']) < ALL (VALUES map(ARRAY[1], ARRAY['hello']))"))
+        assertFails("SELECT map(ARRAY[1], ARRAY['hello']) < ALL (VALUES map(ARRAY[1], ARRAY['hello']))")
                 .hasErrorCode(TYPE_MISMATCH)
                 .hasMessage("line 1:38: Type [row(map(integer, varchar(5)))] must be orderable in order to be used in quantified comparison");
         // but map is comparable
-        analyze(("SELECT map(ARRAY[1], ARRAY['hello']) = ALL (VALUES map(ARRAY[1], ARRAY['hello']))"));
+        analyze("SELECT map(ARRAY[1], ARRAY['hello']) = ALL (VALUES map(ARRAY[1], ARRAY['hello']))");
 
         // HLL is neither orderable nor comparable
         assertFails("SELECT cast(NULL AS HyperLogLog) < ALL (VALUES cast(NULL AS HyperLogLog))")
@@ -6228,7 +6262,7 @@ public class TestAnalyzer
     {
         assertFails("SELECT * FROM TABLE(non_existent_table_function())")
                 .hasErrorCode(FUNCTION_NOT_FOUND)
-                .hasMessage("line 1:21: Table function non_existent_table_function not registered");
+                .hasMessage("line 1:21: Table function 'non_existent_table_function' not registered");
     }
 
     @Test
@@ -6728,6 +6762,7 @@ public class TestAnalyzer
         transactionManager = queryRunner.getTransactionManager();
 
         AccessControlManager accessControlManager = new AccessControlManager(
+                NodeVersion.UNKNOWN,
                 transactionManager,
                 emptyEventListenerManager(),
                 new AccessControlConfig(),
@@ -6757,14 +6792,14 @@ public class TestAnalyzer
                         new ColumnMetadata("b", BIGINT),
                         new ColumnMetadata("c", BIGINT),
                         new ColumnMetadata("d", BIGINT))),
-                false));
+                FAIL));
 
         SchemaTableName table2 = new SchemaTableName("s1", "t2");
         inSetupTransaction(session -> metadata.createTable(session, TPCH_CATALOG,
                 new ConnectorTableMetadata(table2, ImmutableList.of(
                         new ColumnMetadata("a", BIGINT),
                         new ColumnMetadata("b", BIGINT))),
-                false));
+                FAIL));
 
         SchemaTableName table3 = new SchemaTableName("s1", "t3");
         inSetupTransaction(session -> metadata.createTable(session, TPCH_CATALOG,
@@ -6772,7 +6807,7 @@ public class TestAnalyzer
                         new ColumnMetadata("a", BIGINT),
                         new ColumnMetadata("b", BIGINT),
                         ColumnMetadata.builder().setName("x").setType(BIGINT).setHidden(true).build())),
-                false));
+                FAIL));
 
         // table with a hidden column
         SchemaTableName table5 = new SchemaTableName("s1", "t5");
@@ -6780,7 +6815,7 @@ public class TestAnalyzer
                 new ConnectorTableMetadata(table5, ImmutableList.of(
                         new ColumnMetadata("a", BIGINT),
                         ColumnMetadata.builder().setName("b").setType(BIGINT).setHidden(true).build())),
-                false));
+                FAIL));
 
         // table with a varchar column
         SchemaTableName table6 = new SchemaTableName("s1", "t6");
@@ -6790,7 +6825,7 @@ public class TestAnalyzer
                         new ColumnMetadata("b", VARCHAR),
                         new ColumnMetadata("c", BIGINT),
                         new ColumnMetadata("d", BIGINT))),
-                false));
+                FAIL));
 
         // table with bigint, double, array of bigints and array of doubles column
         SchemaTableName table7 = new SchemaTableName("s1", "t7");
@@ -6800,7 +6835,7 @@ public class TestAnalyzer
                         new ColumnMetadata("b", DOUBLE),
                         new ColumnMetadata("c", new ArrayType(BIGINT)),
                         new ColumnMetadata("d", new ArrayType(DOUBLE)))),
-                false));
+                FAIL));
 
         // materialized view referencing table in same schema
         MaterializedViewDefinition materializedViewData1 = new MaterializedViewDefinition(
@@ -6811,6 +6846,7 @@ public class TestAnalyzer
                 Optional.of(Duration.ZERO),
                 Optional.of("comment"),
                 Identity.ofUser("user"),
+                ImmutableList.of(),
                 Optional.empty(),
                 ImmutableMap.of());
         inSetupTransaction(session -> metadata.createMaterializedView(session, new QualifiedObjectName(TPCH_CATALOG, "s1", "mv1"), materializedViewData1, false, true));
@@ -6822,7 +6858,8 @@ public class TestAnalyzer
                 Optional.of("s1"),
                 ImmutableList.of(new ViewColumn("a", BIGINT.getTypeId(), Optional.empty())),
                 Optional.of("comment"),
-                Optional.of(Identity.ofUser("user")));
+                Optional.of(Identity.ofUser("user")),
+                ImmutableList.of());
         inSetupTransaction(session -> metadata.createView(session, new QualifiedObjectName(TPCH_CATALOG, "s1", "v1"), viewData1, false));
 
         // stale view (different column type)
@@ -6832,7 +6869,8 @@ public class TestAnalyzer
                 Optional.of("s1"),
                 ImmutableList.of(new ViewColumn("a", VARCHAR.getTypeId(), Optional.empty())),
                 Optional.of("comment"),
-                Optional.of(Identity.ofUser("user")));
+                Optional.of(Identity.ofUser("user")),
+                ImmutableList.of());
         inSetupTransaction(session -> metadata.createView(session, new QualifiedObjectName(TPCH_CATALOG, "s1", "v2"), viewData2, false));
 
         // valid view with uppercase column name
@@ -6842,7 +6880,8 @@ public class TestAnalyzer
                 Optional.of("s1"),
                 ImmutableList.of(new ViewColumn("a", BIGINT.getTypeId(), Optional.empty())),
                 Optional.of("comment"),
-                Optional.of(Identity.ofUser("user")));
+                Optional.of(Identity.ofUser("user")),
+                ImmutableList.of());
         inSetupTransaction(session -> metadata.createView(session, new QualifiedObjectName("tpch", "s1", "v4"), viewData4, false));
 
         // recursive view referencing to itself
@@ -6852,7 +6891,8 @@ public class TestAnalyzer
                 Optional.of("s1"),
                 ImmutableList.of(new ViewColumn("a", BIGINT.getTypeId(), Optional.empty())),
                 Optional.of("comment"),
-                Optional.of(Identity.ofUser("user")));
+                Optional.of(Identity.ofUser("user")),
+                ImmutableList.of());
         inSetupTransaction(session -> metadata.createView(session, new QualifiedObjectName(TPCH_CATALOG, "s1", "v5"), viewData5, false));
 
         // type analysis for INSERT
@@ -6871,7 +6911,7 @@ public class TestAnalyzer
                         new ColumnMetadata("nested_bounded_varchar_column", anonymousRow(createVarcharType(3))),
                         new ColumnMetadata("row_column", anonymousRow(TINYINT, createUnboundedVarcharType())),
                         new ColumnMetadata("date_column", DATE))),
-                false));
+                FAIL));
 
         // for identifier chain resolving tests
         queryRunner.createCatalog(CATALOG_FOR_IDENTIFIER_CHAIN_TESTS, new StaticConnectorFactory("chain", new TestingConnector(new TestingMetadata())), ImmutableMap.of());
@@ -6884,39 +6924,39 @@ public class TestAnalyzer
         inSetupTransaction(session -> metadata.createTable(session, CATALOG_FOR_IDENTIFIER_CHAIN_TESTS,
                 new ConnectorTableMetadata(b, ImmutableList.of(
                         new ColumnMetadata("x", VARCHAR))),
-                false));
+                FAIL));
 
         SchemaTableName t1 = new SchemaTableName("a", "t1");
         inSetupTransaction(session -> metadata.createTable(session, CATALOG_FOR_IDENTIFIER_CHAIN_TESTS,
                 new ConnectorTableMetadata(t1, ImmutableList.of(
                         new ColumnMetadata("b", rowType))),
-                false));
+                FAIL));
 
         SchemaTableName t2 = new SchemaTableName("a", "t2");
         inSetupTransaction(session -> metadata.createTable(session, CATALOG_FOR_IDENTIFIER_CHAIN_TESTS,
                 new ConnectorTableMetadata(t2, ImmutableList.of(
                         new ColumnMetadata("a", rowType))),
-                false));
+                FAIL));
 
         SchemaTableName t3 = new SchemaTableName("a", "t3");
         inSetupTransaction(session -> metadata.createTable(session, CATALOG_FOR_IDENTIFIER_CHAIN_TESTS,
                 new ConnectorTableMetadata(t3, ImmutableList.of(
                         new ColumnMetadata("b", nestedRowType),
                         new ColumnMetadata("c", BIGINT))),
-                false));
+                FAIL));
 
         SchemaTableName t4 = new SchemaTableName("a", "t4");
         inSetupTransaction(session -> metadata.createTable(session, CATALOG_FOR_IDENTIFIER_CHAIN_TESTS,
                 new ConnectorTableMetadata(t4, ImmutableList.of(
                         new ColumnMetadata("b", doubleNestedRowType),
                         new ColumnMetadata("c", BIGINT))),
-                false));
+                FAIL));
 
         SchemaTableName t5 = new SchemaTableName("a", "t5");
         inSetupTransaction(session -> metadata.createTable(session, CATALOG_FOR_IDENTIFIER_CHAIN_TESTS,
                 new ConnectorTableMetadata(t5, ImmutableList.of(
                         new ColumnMetadata("b", singleFieldRowType))),
-                false));
+                FAIL));
 
         QualifiedObjectName tableViewAndMaterializedView = new QualifiedObjectName(TPCH_CATALOG, "s1", "table_view_and_materialized_view");
         inSetupTransaction(session -> metadata.createMaterializedView(
@@ -6930,6 +6970,7 @@ public class TestAnalyzer
                         Optional.of(Duration.ZERO),
                         Optional.empty(),
                         Identity.ofUser("some user"),
+                        ImmutableList.of(),
                         Optional.of(new CatalogSchemaTableName(TPCH_CATALOG, "s1", "t1")),
                         ImmutableMap.of()),
                 false,
@@ -6940,7 +6981,8 @@ public class TestAnalyzer
                 Optional.of("s1"),
                 ImmutableList.of(new ViewColumn("a", BIGINT.getTypeId(), Optional.empty())),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                ImmutableList.of());
         inSetupTransaction(session -> metadata.createView(
                 session,
                 tableViewAndMaterializedView,
@@ -6952,7 +6994,7 @@ public class TestAnalyzer
                 new ConnectorTableMetadata(
                         tableViewAndMaterializedView.asSchemaTableName(),
                         ImmutableList.of(new ColumnMetadata("a", BIGINT))),
-                false));
+                FAIL));
 
         QualifiedObjectName tableAndView = new QualifiedObjectName(TPCH_CATALOG, "s1", "table_and_view");
         inSetupTransaction(session -> metadata.createView(
@@ -6966,7 +7008,7 @@ public class TestAnalyzer
                 new ConnectorTableMetadata(
                         tableAndView.asSchemaTableName(),
                         ImmutableList.of(new ColumnMetadata("a", BIGINT))),
-                false));
+                FAIL));
 
         QualifiedObjectName freshMaterializedView = new QualifiedObjectName(TPCH_CATALOG, "s1", "fresh_materialized_view");
         inSetupTransaction(session -> metadata.createMaterializedView(
@@ -6980,6 +7022,7 @@ public class TestAnalyzer
                         Optional.empty(),
                         Optional.empty(),
                         Identity.ofUser("some user"),
+                        ImmutableList.of(),
                         // t3 has a, b column and hidden column x
                         Optional.of(new CatalogSchemaTableName(TPCH_CATALOG, "s1", "t3")),
                         ImmutableMap.of()),
@@ -6999,6 +7042,7 @@ public class TestAnalyzer
                         Optional.empty(),
                         Optional.empty(),
                         Identity.ofUser("some user"),
+                        ImmutableList.of(),
                         Optional.of(new CatalogSchemaTableName(TPCH_CATALOG, "s1", "t2")),
                         ImmutableMap.of()),
                 false,
@@ -7017,6 +7061,7 @@ public class TestAnalyzer
                         Optional.empty(),
                         Optional.empty(),
                         Identity.ofUser("some user"),
+                        ImmutableList.of(),
                         Optional.of(new CatalogSchemaTableName(TPCH_CATALOG, "s1", "t2")),
                         ImmutableMap.of()),
                 false,
@@ -7035,6 +7080,7 @@ public class TestAnalyzer
                         Optional.empty(),
                         Optional.empty(),
                         Identity.ofUser("some user"),
+                        ImmutableList.of(),
                         Optional.of(new CatalogSchemaTableName(TPCH_CATALOG, "s1", "t2")),
                         ImmutableMap.of()),
                 false,
@@ -7073,7 +7119,7 @@ public class TestAnalyzer
 
     private void inSetupTransaction(Consumer<Session> consumer)
     {
-        transaction(transactionManager, accessControl)
+        transaction(transactionManager, plannerContext.getMetadata(), accessControl)
                 .singleStatement()
                 .readUncommitted()
                 .execute(SETUP_SESSION, consumer);
@@ -7117,7 +7163,6 @@ public class TestAnalyzer
                         new PolymorphicStaticReturnTypeFunction(),
                         new PassThroughFunction(),
                         new RequiredColumnsFunction()))),
-                new SessionPropertyManager(),
                 tablePropertyManager,
                 analyzePropertyManager,
                 new TableProceduresPropertyManager(CatalogServiceProvider.fail("procedures are not supported in testing analyzer")));
@@ -7142,13 +7187,12 @@ public class TestAnalyzer
 
     private Analysis analyze(Session clientSession, @Language("SQL") String query, AccessControl accessControl)
     {
-        return transaction(transactionManager, accessControl)
+        return transaction(transactionManager, plannerContext.getMetadata(), accessControl)
                 .singleStatement()
                 .readUncommitted()
                 .execute(clientSession, session -> {
                     Analyzer analyzer = createAnalyzer(session, accessControl);
-                    Statement statement = SQL_PARSER.createStatement(query, new ParsingOptions(
-                            new FeaturesConfig().isParseDecimalLiteralsAsDouble() ? AS_DOUBLE : AS_DECIMAL));
+                    Statement statement = SQL_PARSER.createStatement(query);
                     return analyzer.analyze(statement);
                 });
     }

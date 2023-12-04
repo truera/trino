@@ -24,7 +24,6 @@ import io.trino.execution.SplitAssignment;
 import io.trino.memory.context.LocalMemoryContext;
 import io.trino.metadata.Split;
 import io.trino.metadata.TableHandle;
-import io.trino.spi.HostAddress;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ColumnHandle;
@@ -36,9 +35,12 @@ import io.trino.split.PageSourceProvider;
 import io.trino.sql.planner.plan.PlanNodeId;
 import io.trino.testing.MaterializedResult;
 import io.trino.testing.PageConsumerOperator;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -62,19 +64,18 @@ import static io.trino.testing.TestingHandles.TEST_TABLE_HANDLE;
 import static io.trino.testing.TestingTaskContext.createTaskContext;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertSame;
-import static org.testng.Assert.assertTrue;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_METHOD;
 
-@Test(singleThreaded = true)
+@TestInstance(PER_METHOD)
 public class TestDriver
 {
     private ExecutorService executor;
     private ScheduledExecutorService scheduledExecutor;
     private DriverContext driverContext;
 
-    @BeforeMethod
+    @BeforeEach
     public void setUp()
     {
         executor = newCachedThreadPool(daemonThreadsNamed(getClass().getSimpleName() + "-%s"));
@@ -85,7 +86,7 @@ public class TestDriver
                 .addDriverContext();
     }
 
-    @AfterMethod(alwaysRun = true)
+    @AfterEach
     public void tearDown()
     {
         executor.shutdownNow();
@@ -103,19 +104,20 @@ public class TestDriver
         Operator sink = createSinkOperator(types);
         Driver driver = Driver.createDriver(driverContext, source, sink);
 
-        assertSame(driver.getDriverContext(), driverContext);
+        assertThat(driver.getDriverContext()).isSameAs(driverContext);
 
-        assertFalse(driver.isFinished());
+        assertThat(driver.isFinished()).isFalse();
         ListenableFuture<Void> blocked = driver.processForDuration(new Duration(1, TimeUnit.SECONDS));
-        assertTrue(blocked.isDone());
-        assertTrue(driver.isFinished());
+        assertThat(blocked.isDone()).isTrue();
+        assertThat(driver.isFinished()).isTrue();
 
-        assertTrue(sink.isFinished());
-        assertTrue(source.isFinished());
+        assertThat(sink.isFinished()).isTrue();
+        assertThat(source.isFinished()).isTrue();
     }
 
     // The race can be reproduced somewhat reliably when the invocationCount is 10K, but we use 1K iterations to cap the test runtime.
-    @Test(invocationCount = 1_000, timeOut = 10_000)
+    @RepeatedTest(1000)
+    @Timeout(10)
     public void testConcurrentClose()
     {
         List<Type> types = ImmutableList.of(VARCHAR, BIGINT, BIGINT);
@@ -145,18 +147,18 @@ public class TestDriver
         PageConsumerOperator sink = createSinkOperator(types);
         Driver driver = Driver.createDriver(driverContext, source, sink);
 
-        assertSame(driver.getDriverContext(), driverContext);
+        assertThat(driver.getDriverContext()).isSameAs(driverContext);
 
-        assertFalse(driver.isFinished());
+        assertThat(driver.isFinished()).isFalse();
         driver.close();
-        assertTrue(driver.isFinished());
+        assertThat(driver.isFinished()).isTrue();
 
         // finish is only called in normal operations
-        assertFalse(source.isFinished());
-        assertFalse(sink.isFinished());
+        assertThat(source.isFinished()).isFalse();
+        assertThat(sink.isFinished()).isFalse();
 
         // close is always called (values operator doesn't have a closed state)
-        assertTrue(sink.isClosed());
+        assertThat(sink.isClosed()).isTrue();
     }
 
     @Test
@@ -176,20 +178,20 @@ public class TestDriver
         PageConsumerOperator sink = createSinkOperator(types);
         Driver driver = Driver.createDriver(driverContext, source, sink);
 
-        assertSame(driver.getDriverContext(), driverContext);
+        assertThat(driver.getDriverContext()).isSameAs(driverContext);
 
-        assertFalse(driver.isFinished());
-        assertFalse(driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
-        assertFalse(driver.isFinished());
+        assertThat(driver.isFinished()).isFalse();
+        assertThat(driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone()).isFalse();
+        assertThat(driver.isFinished()).isFalse();
 
         driver.updateSplitAssignment(new SplitAssignment(sourceId, ImmutableSet.of(new ScheduledSplit(0, sourceId, newMockSplit())), true));
 
-        assertFalse(driver.isFinished());
-        assertTrue(driver.processForDuration(new Duration(1, TimeUnit.SECONDS)).isDone());
-        assertTrue(driver.isFinished());
+        assertThat(driver.isFinished()).isFalse();
+        assertThat(driver.processForDuration(new Duration(1, TimeUnit.SECONDS)).isDone()).isTrue();
+        assertThat(driver.isFinished()).isTrue();
 
-        assertTrue(sink.isFinished());
-        assertTrue(source.isFinished());
+        assertThat(sink.isFinished()).isTrue();
+        assertThat(source.isFinished()).isTrue();
     }
 
     @Test
@@ -198,20 +200,20 @@ public class TestDriver
         BrokenOperator brokenOperator = new BrokenOperator(driverContext.addOperatorContext(0, new PlanNodeId("test"), "source"), false);
         Driver driver = Driver.createDriver(driverContext, brokenOperator, createSinkOperator(ImmutableList.of()));
 
-        assertSame(driver.getDriverContext(), driverContext);
+        assertThat(driver.getDriverContext()).isSameAs(driverContext);
 
         // block thread in operator processing
         Future<Boolean> driverProcessFor = executor.submit(() -> driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
         brokenOperator.waitForLocked();
 
         driver.close();
-        assertTrue(driver.isFinished());
+        assertThat(driver.isFinished()).isTrue();
 
         assertThatThrownBy(() -> driverProcessFor.get(1, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
                 .hasCause(new TrinoException(GENERIC_INTERNAL_ERROR, "Driver was interrupted"));
 
-        assertTrue(driver.getDestroyedFuture().isDone());
+        assertThat(driver.getDestroyedFuture().isDone()).isTrue();
     }
 
     @Test
@@ -221,7 +223,7 @@ public class TestDriver
         BrokenOperator brokenOperator = new BrokenOperator(driverContext.addOperatorContext(0, new PlanNodeId("test"), "source"), true);
         Driver driver = Driver.createDriver(driverContext, brokenOperator, createSinkOperator(ImmutableList.of()));
 
-        assertSame(driver.getDriverContext(), driverContext);
+        assertThat(driver.getDriverContext()).isSameAs(driverContext);
 
         // block thread in operator close
         Future<Boolean> driverClose = executor.submit(() -> {
@@ -230,14 +232,14 @@ public class TestDriver
         });
         brokenOperator.waitForLocked();
 
-        assertTrue(driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
-        assertTrue(driver.isFinished());
-        assertFalse(driver.getDestroyedFuture().isDone());
+        assertThat(driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone()).isTrue();
+        assertThat(driver.isFinished()).isTrue();
+        assertThat(driver.getDestroyedFuture().isDone()).isFalse();
 
         brokenOperator.unlock();
 
-        assertTrue(driverClose.get());
-        assertTrue(driver.getDestroyedFuture().isDone());
+        assertThat(driverClose.get()).isTrue();
+        assertThat(driver.getDestroyedFuture().isDone()).isTrue();
     }
 
     @Test
@@ -256,7 +258,7 @@ public class TestDriver
         // the table scan operator will request memory revocation with requestMemoryRevoking()
         // while the driver is still not done with the processFor() method and before it moves to
         // updateDriverBlockedFuture() method.
-        assertTrue(driver.processForDuration(new Duration(100, TimeUnit.MILLISECONDS)).isDone());
+        assertThat(driver.processForDuration(new Duration(100, TimeUnit.MILLISECONDS)).isDone()).isTrue();
     }
 
     @Test
@@ -277,10 +279,10 @@ public class TestDriver
         Driver driver = Driver.createDriver(driverContext, source, sink);
 
         ListenableFuture<Void> blocked = driver.processForDuration(new Duration(100, TimeUnit.MILLISECONDS));
-        assertFalse(blocked.isDone());
+        assertThat(blocked.isDone()).isFalse();
 
         sink.setFinished();
-        assertTrue(blocked.isDone());
+        assertThat(blocked.isDone()).isTrue();
     }
 
     @Test
@@ -304,28 +306,28 @@ public class TestDriver
         Future<Boolean> driverProcessFor = executor.submit(() -> driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
         brokenOperator.waitForLocked();
 
-        assertSame(driver.getDriverContext(), driverContext);
+        assertThat(driver.getDriverContext()).isSameAs(driverContext);
 
-        assertFalse(driver.isFinished());
+        assertThat(driver.isFinished()).isFalse();
         // processFor always returns NOT_BLOCKED, because DriveLockResult was not acquired
-        assertTrue(driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
-        assertFalse(driver.isFinished());
+        assertThat(driver.processForDuration(new Duration(1, TimeUnit.MILLISECONDS)).isDone()).isTrue();
+        assertThat(driver.isFinished()).isFalse();
 
         driver.updateSplitAssignment(new SplitAssignment(sourceId, ImmutableSet.of(new ScheduledSplit(0, sourceId, newMockSplit())), true));
 
-        assertFalse(driver.getDestroyedFuture().isDone());
+        assertThat(driver.getDestroyedFuture().isDone()).isFalse();
         // processFor always returns NOT_BLOCKED, because DriveLockResult was not acquired
-        assertTrue(driver.processForDuration(new Duration(1, TimeUnit.SECONDS)).isDone());
-        assertFalse(driver.isFinished());
+        assertThat(driver.processForDuration(new Duration(1, TimeUnit.SECONDS)).isDone()).isTrue();
+        assertThat(driver.isFinished()).isFalse();
 
         driver.close();
-        assertTrue(driver.isFinished());
+        assertThat(driver.isFinished()).isTrue();
 
         assertThatThrownBy(() -> driverProcessFor.get(1, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
                 .hasCause(new TrinoException(GENERIC_INTERNAL_ERROR, "Driver was interrupted"));
 
-        assertTrue(driver.getDestroyedFuture().isDone());
+        assertThat(driver.getDestroyedFuture().isDone()).isTrue();
     }
 
     private static Split newMockSplit()
@@ -374,7 +376,7 @@ public class TestDriver
         private void waitForLocked()
         {
             try {
-                assertTrue(lockedLatch.await(10, TimeUnit.SECONDS));
+                assertThat(lockedLatch.await(10, TimeUnit.SECONDS)).isTrue();
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -385,10 +387,10 @@ public class TestDriver
         private void waitForUnlock()
         {
             try {
-                assertTrue(lock.tryLock(1, TimeUnit.SECONDS));
+                assertThat(lock.tryLock(1, TimeUnit.SECONDS)).isTrue();
                 try {
                     lockedLatch.countDown();
-                    assertTrue(unlockLatch.await(5, TimeUnit.SECONDS));
+                    assertThat(unlockLatch.await(5, TimeUnit.SECONDS)).isTrue();
                 }
                 finally {
                     lock.unlock();
@@ -543,18 +545,6 @@ public class TestDriver
     private static class MockSplit
             implements ConnectorSplit
     {
-        @Override
-        public boolean isRemotelyAccessible()
-        {
-            return false;
-        }
-
-        @Override
-        public List<HostAddress> getAddresses()
-        {
-            return ImmutableList.of();
-        }
-
         @Override
         public Object getInfo()
         {

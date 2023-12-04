@@ -32,8 +32,10 @@ import org.apache.http.nio.entity.NStringEntity;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.intellij.lang.annotations.Language;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -49,10 +51,9 @@ import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertTrue;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
 
+@TestInstance(PER_CLASS)
 public abstract class BaseElasticsearchConnectorTest
         extends BaseConnectorTest
 {
@@ -85,7 +86,7 @@ public abstract class BaseElasticsearchConnectorTest
                 catalogName);
     }
 
-    @AfterClass(alwaysRun = true)
+    @AfterAll
     public final void destroy()
             throws IOException
     {
@@ -132,13 +133,9 @@ public abstract class BaseElasticsearchConnectorTest
      * @return the amount of clauses to be used in large queries
      */
     @Override
-    protected Object[][] largeInValuesCountData()
+    protected List<Integer> largeInValuesCountData()
     {
-        return new Object[][] {
-                {200},
-                {500},
-                {1000}
-        };
+        return ImmutableList.of(200, 500, 1000);
     }
 
     @Test
@@ -199,6 +196,7 @@ public abstract class BaseElasticsearchConnectorTest
                 "TopNPartial\\[count = 5, orderBy = \\[nationkey DESC");
     }
 
+    @Test
     @Override
     public void testShowCreateTable()
     {
@@ -637,7 +635,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row(null, null, "\"Check out the bi-weekly Trino Community Broadcast https://trino.io/broadcast/\"", null, null, null, "5309")
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
 
         MaterializedResult nestedRows = computeActual("" +
                 "SELECT " +
@@ -656,7 +654,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row(null, null, "\"Join the Trino Slack: https://trino.io/slack.html\"", null, null, null, "867")
                 .build();
 
-        assertEquals(nestedRows.getMaterializedRows(), nestedExpected.getMaterializedRows());
+        assertThat(nestedRows.getMaterializedRows()).isEqualTo(nestedExpected.getMaterializedRows());
 
         MaterializedResult arrayRows = computeActual("" +
                 "SELECT " +
@@ -675,7 +673,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row(null, null, "\"If you like Presto, you'll love Trino: https://trino.io/slack.html\"", null, null, null, "321")
                 .build();
 
-        assertEquals(arrayRows.getMaterializedRows(), arrayExpected.getMaterializedRows());
+        assertThat(arrayRows.getMaterializedRows()).isEqualTo(arrayExpected.getMaterializedRows());
 
         MaterializedResult rawRows = computeActual("" +
                 "SELECT " +
@@ -694,7 +692,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row(null, null, "\"The founders and core contributors of Presto, and are now working on Trino: https://trino.io/blog/2020/12/27/announcing-trino.html\"", null, null, null, "654")
                 .build();
 
-        assertEquals(rawRows.getMaterializedRows(), rawRowsExpected.getMaterializedRows());
+        assertThat(rawRows.getMaterializedRows()).isEqualTo(rawRowsExpected.getMaterializedRows());
     }
 
     @Test
@@ -798,7 +796,7 @@ public abstract class BaseElasticsearchConnectorTest
         assertThat(rows.getTypes())
                 .hasOnlyElementsOfType(VarcharType.class);
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
 
         deleteIndex(indexName);
     }
@@ -857,7 +855,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row("\"dGVzdA==\"", "true", "123")
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
         assertThat(rows.getTypes())
                 .hasOnlyElementsOfType(VarcharType.class);
 
@@ -1207,7 +1205,7 @@ public abstract class BaseElasticsearchConnectorTest
                         123456.78d)
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
     }
 
     @Test
@@ -1237,7 +1235,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row(1L)
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
     }
 
     @Test
@@ -1427,7 +1425,7 @@ public abstract class BaseElasticsearchConnectorTest
                 .row(1.0f, 1.0d, 1, 1L)
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
     }
 
     @Test
@@ -1623,7 +1621,7 @@ public abstract class BaseElasticsearchConnectorTest
                         LocalDateTime.of(1970, 1, 1, 0, 0), "1.2.3.4", "2001:db8::1:0:0:1")
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
     }
 
     @Test
@@ -1693,7 +1691,7 @@ public abstract class BaseElasticsearchConnectorTest
                         LocalDateTime.of(1970, 1, 1, 0, 0), "1.2.3.4", "2001:db8::1:0:0:1")
                 .build();
 
-        assertEquals(rows.getMaterializedRows(), expected.getMaterializedRows());
+        assertThat(rows.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
     }
 
     @Test
@@ -1775,7 +1773,8 @@ public abstract class BaseElasticsearchConnectorTest
         testSelectInformationSchemaColumns();
     }
 
-    @Test(enabled = false) // TODO (https://github.com/trinodb/trino/issues/2428)
+    @Test // TODO (https://github.com/trinodb/trino/issues/2428)
+    @Disabled
     public void testMultiIndexAlias()
             throws IOException
     {
@@ -1804,7 +1803,7 @@ public abstract class BaseElasticsearchConnectorTest
         createIndex(indexName, mappings);
 
         assertQuery(format("SELECT column_name FROM information_schema.columns WHERE table_name = '%s'", indexName), "VALUES ('dummy_column')");
-        assertTrue(computeActual("SHOW TABLES").getOnlyColumnAsSet().contains(indexName));
+        assertThat(computeActual("SHOW TABLES").getOnlyColumnAsSet()).contains(indexName);
         assertQueryReturnsEmptyResult("SELECT * FROM " + indexName);
     }
 
@@ -1907,7 +1906,7 @@ public abstract class BaseElasticsearchConnectorTest
     protected void assertTableDoesNotExist(String name)
     {
         assertQueryReturnsEmptyResult(format("SELECT * FROM information_schema.columns WHERE table_name = '%s'", name));
-        assertFalse(computeActual("SHOW TABLES").getOnlyColumnAsSet().contains(name));
+        assertThat(computeActual("SHOW TABLES").getOnlyColumnAsSet().contains(name)).isFalse();
         assertQueryFails("SELECT * FROM " + name, ".*Table '" + catalogName + ".tpch." + name + "' does not exist");
     }
 

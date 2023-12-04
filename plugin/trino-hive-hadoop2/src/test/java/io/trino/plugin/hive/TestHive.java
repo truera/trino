@@ -19,23 +19,24 @@ import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import org.apache.hadoop.net.NetUtils;
-import org.testng.SkipException;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Parameters;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.abort;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
 
-// staging directory is shared mutable state
-@Test(singleThreaded = true)
+@TestInstance(PER_CLASS)
 public class TestHive
         extends AbstractTestHive
 {
-    @Parameters({"test.metastore", "test.database"})
-    @BeforeClass
-    public void initialize(String metastore, String database)
+    @BeforeAll
+    public void initialize()
     {
+        String metastore = System.getProperty("test.metastore");
+        String database = System.getProperty("test.database");
         String hadoopMasterIp = System.getProperty("hadoop-master-ip");
         if (hadoopMasterIp != null) {
             // Even though Hadoop is accessed by proxy, Hadoop still tries to resolve hadoop-master
@@ -48,13 +49,6 @@ public class TestHive
     }
 
     @Test
-    public void forceTestNgToRespectSingleThreaded()
-    {
-        // TODO: Remove after updating TestNG to 7.4.0+ (https://github.com/trinodb/trino/issues/8571)
-        // TestNG doesn't enforce @Test(singleThreaded = true) when tests are defined in base class. According to
-        // https://github.com/cbeust/testng/issues/2361#issuecomment-688393166 a workaround it to add a dummy test to the leaf test class.
-    }
-
     @Override
     public void testHideDeltaLakeTables()
     {
@@ -66,7 +60,7 @@ public class TestHive
                         "  \\[\\1]\n" +
                         "but found.*");
 
-        throw new SkipException("not supported");
+        abort("not supported");
     }
 
     @Test
@@ -91,6 +85,7 @@ public class TestHive
         }
     }
 
+    @Test
     @Override
     public void testUpdateBasicPartitionStatistics()
             throws Exception
@@ -112,6 +107,7 @@ public class TestHive
         }
     }
 
+    @Test
     @Override
     public void testUpdatePartitionColumnStatistics()
             throws Exception
@@ -133,6 +129,7 @@ public class TestHive
         }
     }
 
+    @Test
     @Override
     public void testUpdatePartitionColumnStatisticsEmptyOptionalFields()
             throws Exception
@@ -154,6 +151,7 @@ public class TestHive
         }
     }
 
+    @Test
     @Override
     public void testStorePartitionWithStatistics()
             throws Exception
@@ -164,6 +162,7 @@ public class TestHive
         testStorePartitionWithStatistics(STATISTICS_PARTITIONED_TABLE_COLUMNS, STATISTICS_1, STATISTICS_2, STATISTICS_1_1, EMPTY_ROWCOUNT_STATISTICS);
     }
 
+    @Test
     @Override
     public void testDataColumnProperties()
     {
@@ -173,6 +172,7 @@ public class TestHive
                 .hasMessage("Persisting column properties is not supported: Column{name=id, type=bigint}");
     }
 
+    @Test
     @Override
     public void testPartitionColumnProperties()
     {

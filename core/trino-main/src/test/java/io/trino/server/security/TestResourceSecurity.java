@@ -89,7 +89,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
-import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.hash.Hashing.sha256;
 import static com.google.common.net.HttpHeaders.AUTHORIZATION;
 import static com.google.inject.multibindings.OptionalBinder.newOptionalBinder;
@@ -106,6 +105,7 @@ import static io.trino.server.security.jwt.JwtUtil.newJwtBuilder;
 import static io.trino.server.security.jwt.JwtUtil.newJwtParserBuilder;
 import static io.trino.server.security.oauth2.OAuth2Service.NONCE;
 import static io.trino.server.ui.FormWebUiAuthenticationFilter.UI_LOCATION;
+import static io.trino.server.ui.OAuthIdTokenCookie.ID_TOKEN_COOKIE;
 import static io.trino.server.ui.OAuthWebUiCookie.OAUTH2_COOKIE;
 import static io.trino.spi.security.AccessDeniedException.denyImpersonateUser;
 import static io.trino.spi.security.AccessDeniedException.denyReadSystemInformationAccess;
@@ -122,9 +122,6 @@ import static java.time.Instant.now;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
 
 public class TestResourceSecurity
 {
@@ -324,9 +321,9 @@ public class TestResourceSecurity
                     .addHeader("X-Trino-User", TEST_USER_LOGIN)
                     .build();
             try (Response response = client.newCall(request).execute()) {
-                assertEquals(response.code(), SC_OK);
-                assertEquals(response.header("user"), TEST_USER);
-                assertEquals(response.header("principal"), TEST_USER_LOGIN);
+                assertThat(response.code()).isEqualTo(SC_OK);
+                assertThat(response.header("user")).isEqualTo(TEST_USER);
+                assertThat(response.header("principal")).isEqualTo(TEST_USER_LOGIN);
             }
         }
     }
@@ -675,26 +672,36 @@ public class TestResourceSecurity
             if (refreshTokensEnabled) {
                 TokenPairSerializer serializer = server.getInstance(Key.get(TokenPairSerializer.class));
                 TokenPair tokenPair = serializer.deserialize(getOauthToken(client, bearer.getTokenServer()));
-                assertEquals(tokenPair.accessToken(), tokenServer.getAccessToken());
-                assertEquals(tokenPair.refreshToken(), Optional.of(tokenServer.getRefreshToken()));
+                assertThat(tokenPair.accessToken()).isEqualTo(tokenServer.getAccessToken());
+                assertThat(tokenPair.refreshToken()).isEqualTo(Optional.of(tokenServer.getRefreshToken()));
             }
             else {
-                assertEquals(getOauthToken(client, bearer.getTokenServer()), tokenServer.getAccessToken());
+                assertThat(getOauthToken(client, bearer.getTokenServer())).isEqualTo(tokenServer.getAccessToken());
             }
 
             // if Web UI is using oauth so we should get a cookie
             if (webUiEnabled) {
-                HttpCookie cookie = getOnlyElement(cookieManager.getCookieStore().getCookies());
-                assertEquals(cookie.getValue(), tokenServer.getAccessToken());
-                assertEquals(cookie.getPath(), "/ui/");
-                assertEquals(cookie.getDomain(), baseUri.getHost());
-                assertTrue(cookie.getMaxAge() > 0 && cookie.getMaxAge() < MINUTES.toSeconds(5));
-                assertTrue(cookie.isHttpOnly());
+                HttpCookie cookie = getCookie(cookieManager, OAUTH2_COOKIE);
+                assertThat(cookie.getValue()).isEqualTo(tokenServer.getAccessToken());
+                assertThat(cookie.getPath()).isEqualTo("/ui/");
+                assertThat(cookie.getDomain()).isEqualTo(baseUri.getHost());
+                assertThat(cookie.getMaxAge() > 0 && cookie.getMaxAge() < MINUTES.toSeconds(5)).isTrue();
+                assertThat(cookie.isHttpOnly()).isTrue();
+
+                HttpCookie idTokenCookie = getCookie(cookieManager, ID_TOKEN_COOKIE);
+                assertThat(idTokenCookie.getValue()).isEqualTo(tokenServer.issueIdToken(Optional.of(hashNonce(bearer.getNonceCookie().getValue()))));
+                assertThat(idTokenCookie.getPath()).isEqualTo("/ui/");
+                assertThat(idTokenCookie.getDomain()).isEqualTo(baseUri.getHost());
+                assertThat(idTokenCookie.getMaxAge() > 0 && cookie.getMaxAge() < MINUTES.toSeconds(5)).isTrue();
+                assertThat(idTokenCookie.isHttpOnly()).isTrue();
+
                 cookieManager.getCookieStore().removeAll();
             }
             else {
                 List<HttpCookie> cookies = cookieManager.getCookieStore().getCookies();
-                assertTrue(cookies.isEmpty(), "Expected no cookies when webUi is not enabled, but got: " + cookies);
+                assertThat(cookies.isEmpty())
+                        .describedAs("Expected no cookies when webUi is not enabled, but got: " + cookies)
+                        .isTrue();
             }
 
             OkHttpClient clientWithOAuthToken = client.newBuilder()
@@ -715,12 +722,16 @@ public class TestResourceSecurity
         String redirectTo;
         String tokenServer;
         try (Response response = client.newCall(request).execute()) {
-            assertEquals(response.code(), SC_UNAUTHORIZED, url);
+            assertThat(response.code())
+                    .describedAs(url)
+                    .isEqualTo(SC_UNAUTHORIZED);
             String authenticateHeader = response.header(WWW_AUTHENTICATE);
-            assertNotNull(authenticateHeader);
+            assertThat(authenticateHeader).isNotNull();
             Pattern oauth2BearerPattern = Pattern.compile("Bearer x_redirect_server=\"(https://127.0.0.1:[0-9]+/oauth2/token/initiate/.+)\", x_token_server=\"(https://127.0.0.1:[0-9]+/oauth2/token/.+)\"");
             Matcher matcher = oauth2BearerPattern.matcher(authenticateHeader);
-            assertTrue(matcher.matches(), format("Invalid authentication header.\nExpected: %s\nPattern: %s", authenticateHeader, oauth2BearerPattern));
+            assertThat(matcher.matches())
+                    .describedAs(format("Invalid authentication header.\nExpected: %s\nPattern: %s", authenticateHeader, oauth2BearerPattern))
+                    .isTrue();
             redirectTo = matcher.group(1);
             tokenServer = matcher.group(2);
         }
@@ -729,12 +740,14 @@ public class TestResourceSecurity
                 .url(redirectTo)
                 .build();
         try (Response response = client.newCall(request).execute()) {
-            assertEquals(response.code(), SC_SEE_OTHER);
+            assertThat(response.code()).isEqualTo(SC_SEE_OTHER);
             String locationHeader = response.header(LOCATION);
-            assertNotNull(locationHeader);
+            assertThat(locationHeader).isNotNull();
             Pattern locationPattern = Pattern.compile(format("%s\\?(.+)", expectedRedirect));
             Matcher matcher = locationPattern.matcher(locationHeader);
-            assertTrue(matcher.matches(), format("Invalid location header.\nExpected: %s\nPattern: %s", expectedRedirect, locationPattern));
+            assertThat(matcher.matches())
+                    .describedAs(format("Invalid location header.\nExpected: %s\nPattern: %s", expectedRedirect, locationPattern))
+                    .isTrue();
 
             HttpCookie nonceCookie = HttpCookie.parse(requireNonNull(response.header(SET_COOKIE))).get(0);
             nonceCookie.setDomain(request.url().host());
@@ -802,10 +815,10 @@ public class TestResourceSecurity
                             .url(getLocation(httpServerInfo.getHttpsUri(), "/protocol/identity"))
                             .build())
                     .execute()) {
-                assertEquals(response.code(), SC_OK);
-                assertEquals(response.header("user"), TEST_USER);
-                assertEquals(response.header("principal"), TEST_USER);
-                assertEquals(response.header("groups"), groups.map(TestResource::toHeader).orElse(""));
+                assertThat(response.code()).isEqualTo(SC_OK);
+                assertThat(response.header("user")).isEqualTo(TEST_USER);
+                assertThat(response.header("principal")).isEqualTo(TEST_USER);
+                assertThat(response.header("groups")).isEqualTo(groups.map(TestResource::toHeader).orElse(""));
             }
 
             OkHttpClient clientWithOAuthCookie = client.newBuilder()
@@ -834,10 +847,10 @@ public class TestResourceSecurity
                             .url(getLocation(httpServerInfo.getHttpsUri(), "/ui/api/identity"))
                             .build())
                     .execute()) {
-                assertEquals(response.code(), SC_OK);
-                assertEquals(response.header("user"), TEST_USER);
-                assertEquals(response.header("principal"), TEST_USER);
-                assertEquals(response.header("groups"), groups.map(TestResource::toHeader).orElse(""));
+                assertThat(response.code()).isEqualTo(SC_OK);
+                assertThat(response.header("user")).isEqualTo(TEST_USER);
+                assertThat(response.header("principal")).isEqualTo(TEST_USER);
+                assertThat(response.header("groups")).isEqualTo(groups.map(TestResource::toHeader).orElse(""));
             }
         }
     }
@@ -969,7 +982,7 @@ public class TestResourceSecurity
             server.getInstance(Key.get(PasswordAuthenticatorManager.class)).setAuthenticators(TestResourceSecurity::authenticate);
             HttpServerInfo httpServerInfo = server.getInstance(Key.get(HttpServerInfo.class));
 
-            // Authenticated user TEST_USER_LOGIN impersonates impersonated-user by passing request header X-Trino-Authorization-User
+            // Authenticated user TEST_USER_LOGIN impersonates impersonated-user by passing request header X-Trino-User
             Request request = new Request.Builder()
                     .url(getLocation(httpServerInfo.getHttpsUri(), "/protocol/identity"))
                     .addHeader("Authorization", Credentials.basic(TEST_USER_LOGIN, TEST_PASSWORD))
@@ -977,9 +990,9 @@ public class TestResourceSecurity
                     .addHeader("X-Trino-User", "impersonated-user")
                     .build();
             try (Response response = client.newCall(request).execute()) {
-                assertEquals(response.code(), SC_OK);
-                assertEquals(response.header("user"), "impersonated-user");
-                assertEquals(response.header("principal"), TEST_USER_LOGIN);
+                assertThat(response.code()).isEqualTo(SC_OK);
+                assertThat(response.header("user")).isEqualTo("impersonated-user");
+                assertThat(response.header("principal")).isEqualTo(TEST_USER_LOGIN);
             }
         }
     }
@@ -1069,7 +1082,7 @@ public class TestResourceSecurity
                     if (!"TEST_CODE".equals(code)) {
                         throw new IllegalArgumentException("Expected TEST_CODE");
                     }
-                    return new Response(accessToken, now().plus(5, ChronoUnit.MINUTES), Optional.of(issueIdToken(nonce.map(this::hashNonce))), Optional.of(REFRESH_TOKEN));
+                    return new Response(accessToken, now().plus(5, ChronoUnit.MINUTES), Optional.of(issueIdToken(nonce.map(TestResourceSecurity::hashNonce))), Optional.of(REFRESH_TOKEN));
                 }
 
                 @Override
@@ -1085,11 +1098,10 @@ public class TestResourceSecurity
                     throw new UnsupportedOperationException("refresh tokens not supported");
                 }
 
-                private String hashNonce(String nonce)
+                @Override
+                public Optional<URI> getLogoutEndpoint(Optional<String> idToken, URI callbackUrl)
                 {
-                    return sha256()
-                            .hashString(nonce, UTF_8)
-                            .toString();
+                    return Optional.empty();
                 }
             };
         }
@@ -1352,7 +1364,9 @@ public class TestResourceSecurity
                 .headers(headers)
                 .build();
         try (Response response = client.newCall(request).execute()) {
-            assertEquals(response.code(), expectedCode, url);
+            assertThat(response.code())
+                    .describedAs(url)
+                    .isEqualTo(expectedCode);
         }
     }
 
@@ -1395,6 +1409,21 @@ public class TestResourceSecurity
             return new BasicPrincipal(user);
         }
         throw new AccessDeniedException("Invalid credentials2");
+    }
+
+    private static HttpCookie getCookie(CookieManager cookieManager, String cookieName)
+    {
+        return cookieManager.getCookieStore().getCookies().stream()
+                .filter(cookie -> cookie.getName().equals(cookieName))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static String hashNonce(String nonce)
+    {
+        return sha256()
+                .hashString(nonce, UTF_8)
+                .toString();
     }
 
     private static class TestSystemAccessControl

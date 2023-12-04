@@ -17,7 +17,7 @@ import com.google.common.collect.ImmutableMap;
 import io.airlift.units.DataSize;
 import io.airlift.units.DataSize.Unit;
 import io.airlift.units.Duration;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 import java.util.TimeZone;
@@ -43,7 +43,7 @@ public class TestHiveConfig
                 .setMaxSplitSize(DataSize.of(64, Unit.MEGABYTE))
                 .setMaxPartitionsPerScan(1_000_000)
                 .setMaxPartitionsForEagerLoad(100_000)
-                .setMaxOutstandingSplits(1_000)
+                .setMaxOutstandingSplits(3_000)
                 .setMaxOutstandingSplitsSize(DataSize.of(256, Unit.MEGABYTE))
                 .setMaxSplitIteratorThreads(1_000)
                 .setPerTransactionMetastoreCacheMaximumSize(1000)

@@ -14,12 +14,15 @@
 package io.trino.plugin.deltalake.transactionlog.checkpoint;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.math.LongMath;
 import io.airlift.log.Logger;
 import io.trino.filesystem.TrinoInputFile;
+import io.trino.parquet.Column;
 import io.trino.parquet.ParquetReaderOptions;
+import io.trino.plugin.deltalake.DeltaHiveTypeTranslator;
 import io.trino.plugin.deltalake.DeltaLakeColumnHandle;
 import io.trino.plugin.deltalake.DeltaLakeColumnMetadata;
 import io.trino.plugin.deltalake.transactionlog.AddFileEntry;
@@ -37,11 +40,14 @@ import io.trino.plugin.hive.HiveColumnHandle.ColumnType;
 import io.trino.plugin.hive.HiveColumnProjectionInfo;
 import io.trino.plugin.hive.HiveType;
 import io.trino.plugin.hive.ReaderPageSource;
+import io.trino.plugin.hive.parquet.ParquetPageSource;
 import io.trino.plugin.hive.parquet.ParquetPageSourceFactory;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
-import io.trino.spi.connector.ConnectorPageSource;
+import io.trino.spi.block.LongArrayBlock;
+import io.trino.spi.block.SqlRow;
+import io.trino.spi.block.ValueBlock;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
@@ -55,27 +61,24 @@ import io.trino.spi.type.TypeSignature;
 import jakarta.annotation.Nullable;
 import org.joda.time.DateTimeZone;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.ArrayDeque;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.common.collect.Iterables.getOnlyElement;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.collect.MoreCollectors.onlyElement;
 import static io.trino.plugin.deltalake.DeltaLakeColumnType.REGULAR;
-import static io.trino.plugin.deltalake.DeltaLakeErrorCode.DELTA_LAKE_BAD_DATA;
 import static io.trino.plugin.deltalake.DeltaLakeErrorCode.DELTA_LAKE_INVALID_SCHEMA;
+import static io.trino.plugin.deltalake.DeltaLakeSplitManager.partitionMatchesPredicate;
 import static io.trino.plugin.deltalake.transactionlog.DeltaLakeSchemaSupport.extractSchema;
 import static io.trino.plugin.deltalake.transactionlog.DeltaLakeSchemaSupport.isDeletionVectorEnabled;
 import static io.trino.plugin.deltalake.transactionlog.TransactionLogAccess.columnsWithStats;
@@ -97,11 +100,10 @@ import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.lang.Math.floorDiv;
 import static java.lang.String.format;
 import static java.math.RoundingMode.UNNECESSARY;
-import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 public class CheckpointEntryIterator
-        implements Iterator<DeltaLakeTransactionLogEntry>
+        extends AbstractIterator<DeltaLakeTransactionLogEntry>
 {
     public enum EntryType
     {
@@ -129,14 +131,18 @@ public class CheckpointEntryIterator
 
     private final String checkpointPath;
     private final ConnectorSession session;
-    private final ConnectorPageSource pageSource;
+    private final ParquetPageSource pageSource;
+    private final Map<String, Type> parquetFields;
     private final MapType stringMap;
     private final ArrayType stringList;
     private final Queue<DeltaLakeTransactionLogEntry> nextEntries;
     private final List<CheckPointFieldExtractor> extractors;
     private final boolean checkpointRowStatisticsWritingEnabled;
+    private final TupleDomain<DeltaLakeColumnHandle> partitionConstraint;
     private MetadataEntry metadataEntry;
-    private List<DeltaLakeColumnMetadata> schema; // Use DeltaLakeColumnMetadata?
+    private ProtocolEntry protocolEntry;
+    private List<DeltaLakeColumnMetadata> schema;
+    private List<DeltaLakeColumnMetadata> columnsWithMinMaxStats;
     private Page page;
     private long pageIndex;
     private int pagePosition;
@@ -149,17 +155,22 @@ public class CheckpointEntryIterator
             TypeManager typeManager,
             Set<EntryType> fields,
             Optional<MetadataEntry> metadataEntry,
+            Optional<ProtocolEntry> protocolEntry,
             FileFormatDataSourceStats stats,
             ParquetReaderOptions parquetReaderOptions,
             boolean checkpointRowStatisticsWritingEnabled,
-            int domainCompactionThreshold)
+            int domainCompactionThreshold,
+            TupleDomain<DeltaLakeColumnHandle> partitionConstraint,
+            Optional<Predicate<String>> addStatsMinMaxColumnFilter)
     {
         this.checkpointPath = checkpoint.location().toString();
         this.session = requireNonNull(session, "session is null");
         this.stringList = (ArrayType) typeManager.getType(TypeSignature.arrayType(VARCHAR.getTypeSignature()));
         this.stringMap = (MapType) typeManager.getType(TypeSignature.mapType(VARCHAR.getTypeSignature(), VARCHAR.getTypeSignature()));
         this.checkpointRowStatisticsWritingEnabled = checkpointRowStatisticsWritingEnabled;
-        checkArgument(fields.size() > 0, "fields is empty");
+        this.partitionConstraint = requireNonNull(partitionConstraint, "partitionConstraint is null");
+        requireNonNull(addStatsMinMaxColumnFilter, "addStatsMinMaxColumnFilter is null");
+        checkArgument(!fields.isEmpty(), "fields is empty");
         Map<EntryType, CheckPointFieldExtractor> extractors = ImmutableMap.<EntryType, CheckPointFieldExtractor>builder()
                 .put(TRANSACTION, this::buildTxnEntry)
                 .put(ADD, this::buildAddEntry)
@@ -172,44 +183,61 @@ public class CheckpointEntryIterator
         if (fields.contains(ADD)) {
             checkArgument(metadataEntry.isPresent(), "Metadata entry must be provided when reading ADD entries from Checkpoint files");
             this.metadataEntry = metadataEntry.get();
-            this.schema = extractSchema(this.metadataEntry, typeManager);
+            checkArgument(protocolEntry.isPresent(), "Protocol entry must be provided when reading ADD entries from Checkpoint files");
+            this.protocolEntry = protocolEntry.get();
+            checkArgument(addStatsMinMaxColumnFilter.isPresent(), "addStatsMinMaxColumnFilter must be provided when reading ADD entries from Checkpoint files");
+            this.schema = extractSchema(this.metadataEntry, this.protocolEntry, typeManager);
+            this.columnsWithMinMaxStats = columnsWithStats(schema, this.metadataEntry.getOriginalPartitionColumns());
+            Predicate<String> columnStatsFilterFunction = addStatsMinMaxColumnFilter.orElseThrow();
+            this.columnsWithMinMaxStats = columnsWithMinMaxStats.stream()
+                    .filter(column -> columnStatsFilterFunction.test(column.getName()))
+                    .collect(toImmutableList());
         }
 
-        List<HiveColumnHandle> columns = fields.stream()
-                .map(field -> buildColumnHandle(field, checkpointSchemaManager, this.metadataEntry).toHiveColumnHandle())
-                .collect(toImmutableList());
-
-        TupleDomain<HiveColumnHandle> tupleDomain = columns.size() > 1 ?
-                TupleDomain.all() :
-                buildTupleDomainColumnHandle(getOnlyElement(fields), getOnlyElement(columns));
+        ImmutableList.Builder<HiveColumnHandle> columnsBuilder = ImmutableList.builderWithExpectedSize(fields.size());
+        ImmutableList.Builder<TupleDomain<HiveColumnHandle>> disjunctDomainsBuilder = ImmutableList.builderWithExpectedSize(fields.size());
+        for (EntryType field : fields) {
+            HiveColumnHandle column = buildColumnHandle(field, checkpointSchemaManager, this.metadataEntry, this.protocolEntry, addStatsMinMaxColumnFilter).toHiveColumnHandle();
+            columnsBuilder.add(column);
+            disjunctDomainsBuilder.add(buildTupleDomainColumnHandle(field, column));
+        }
 
         ReaderPageSource pageSource = ParquetPageSourceFactory.createPageSource(
                 checkpoint,
                 0,
                 fileSize,
-                columns,
-                tupleDomain,
+                columnsBuilder.build(),
+                disjunctDomainsBuilder.build(), // OR-ed condition
                 true,
                 DateTimeZone.UTC,
                 stats,
                 parquetReaderOptions,
                 Optional.empty(),
-                domainCompactionThreshold);
+                domainCompactionThreshold,
+                OptionalLong.empty());
 
         verify(pageSource.getReaderColumns().isEmpty(), "All columns expected to be base columns");
 
-        this.pageSource = pageSource.get();
+        this.pageSource = (ParquetPageSource) pageSource.get();
         this.nextEntries = new ArrayDeque<>();
+        // The size between parquetFields and extractors may not match when the requested field doesn't exist in Parquet file
+        this.parquetFields = this.pageSource.getColumnFields().stream()
+                .collect(toImmutableMap(Column::name, e -> e.field().getType()));
         this.extractors = fields.stream()
                 .map(field -> requireNonNull(extractors.get(field), "No extractor found for field " + field))
                 .collect(toImmutableList());
     }
 
-    private DeltaLakeColumnHandle buildColumnHandle(EntryType entryType, CheckpointSchemaManager schemaManager, MetadataEntry metadataEntry)
+    private DeltaLakeColumnHandle buildColumnHandle(
+            EntryType entryType,
+            CheckpointSchemaManager schemaManager,
+            MetadataEntry metadataEntry,
+            ProtocolEntry protocolEntry,
+            Optional<Predicate<String>> addStatsMinMaxColumnFilter)
     {
         Type type = switch (entryType) {
             case TRANSACTION -> schemaManager.getTxnEntryType();
-            case ADD -> schemaManager.getAddEntryType(metadataEntry, true, true);
+            case ADD -> schemaManager.getAddEntryType(metadataEntry, protocolEntry, addStatsMinMaxColumnFilter.orElseThrow(), true, true);
             case REMOVE -> schemaManager.getRemoveEntryType();
             case METADATA -> schemaManager.getMetadataEntryType();
             case PROTOCOL -> schemaManager.getProtocolEntryType(true, true);
@@ -260,7 +288,30 @@ public class CheckpointEntryIterator
                         type)),
                 ColumnType.REGULAR,
                 column.getComment());
-        return TupleDomain.withColumnDomains(ImmutableMap.of(handle, Domain.notNull(handle.getType())));
+
+        ImmutableMap.Builder<HiveColumnHandle, Domain> domains = ImmutableMap.<HiveColumnHandle, Domain>builder()
+                .put(handle, Domain.notNull(handle.getType()));
+        if (entryType == ADD) {
+            partitionConstraint.getDomains().orElseThrow().forEach((key, value) -> domains.put(toPartitionValuesParsedField(column, key), value));
+        }
+
+        return TupleDomain.withColumnDomains(domains.buildOrThrow());
+    }
+
+    private static HiveColumnHandle toPartitionValuesParsedField(HiveColumnHandle addColumn, DeltaLakeColumnHandle partitionColumn)
+    {
+        return new HiveColumnHandle(
+                addColumn.getBaseColumnName(),
+                addColumn.getBaseHiveColumnIndex(),
+                addColumn.getBaseHiveType(),
+                addColumn.getBaseType(),
+                Optional.of(new HiveColumnProjectionInfo(
+                        ImmutableList.of(0, 0), // hiveColumnIndex; we provide fake value because we always find columns by name
+                        ImmutableList.of("partitionvalues_parsed", partitionColumn.getColumnName()),
+                        DeltaHiveTypeTranslator.toHiveType(partitionColumn.getType()),
+                        partitionColumn.getType())),
+                HiveColumnHandle.ColumnType.REGULAR,
+                addColumn.getComment());
     }
 
     private DeltaLakeTransactionLogEntry buildCommitInfoEntry(ConnectorSession session, Block block, int pagePosition)
@@ -269,44 +320,52 @@ public class CheckpointEntryIterator
         if (block.isNull(pagePosition)) {
             return null;
         }
+        RowType type = (RowType) parquetFields.get("commitinfo");
         int commitInfoFields = 12;
         int jobFields = 5;
         int notebookFields = 1;
-        Block commitInfoEntryBlock = block.getObject(pagePosition, Block.class);
-        log.debug("Block %s has %s fields", block, commitInfoEntryBlock.getPositionCount());
-        if (commitInfoEntryBlock.getPositionCount() != commitInfoFields) {
+        SqlRow commitInfoRow = block.getObject(pagePosition, SqlRow.class);
+        CheckpointFieldReader commitInfo = new CheckpointFieldReader(session, commitInfoRow, type);
+        log.debug("Block %s has %s fields", block, commitInfoRow.getFieldCount());
+        if (commitInfoRow.getFieldCount() != commitInfoFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", block, commitInfoFields, commitInfoEntryBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", block, commitInfoFields, commitInfoRow.getFieldCount()));
         }
-        Block jobBlock = commitInfoEntryBlock.getObject(6, Block.class);
-        if (jobBlock.getPositionCount() != jobFields) {
+        SqlRow jobRow = commitInfo.getRow("job");
+        if (jobRow.getFieldCount() != jobFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", jobBlock, jobFields, jobBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", jobRow, jobFields, jobRow.getFieldCount()));
         }
-        Block notebookBlock = commitInfoEntryBlock.getObject(7, Block.class);
-        if (notebookBlock.getPositionCount() != notebookFields) {
+        RowType.Field jobField = type.getFields().stream().filter(field -> field.getName().orElseThrow().equals("job")).collect(onlyElement());
+        CheckpointFieldReader job = new CheckpointFieldReader(session, jobRow, (RowType) jobField.getType());
+
+        SqlRow notebookRow = commitInfo.getRow("notebook");
+        if (notebookRow.getFieldCount() != notebookFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", notebookBlock, notebookFields, notebookBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", notebookRow, notebookFields, notebookRow.getFieldCount()));
         }
+        RowType.Field notebookField = type.getFields().stream().filter(field -> field.getName().orElseThrow().equals("notebook")).collect(onlyElement());
+        CheckpointFieldReader notebook = new CheckpointFieldReader(session, notebookRow, (RowType) notebookField.getType());
+
         CommitInfoEntry result = new CommitInfoEntry(
-                getLong(commitInfoEntryBlock, 0),
-                getLong(commitInfoEntryBlock, 1),
-                getString(commitInfoEntryBlock, 2),
-                getString(commitInfoEntryBlock, 3),
-                getString(commitInfoEntryBlock, 4),
-                getMap(commitInfoEntryBlock, 5),
+                commitInfo.getLong("version"),
+                commitInfo.getLong("timestamp"),
+                commitInfo.getString("userId"),
+                commitInfo.getString("userName"),
+                commitInfo.getString("operation"),
+                commitInfo.getMap(stringMap, "operationParameters"),
                 new CommitInfoEntry.Job(
-                        getString(jobBlock, 0),
-                        getString(jobBlock, 1),
-                        getString(jobBlock, 2),
-                        getString(jobBlock, 3),
-                        getString(jobBlock, 4)),
+                        job.getString("jobId"),
+                        job.getString("jobName"),
+                        job.getString("runId"),
+                        job.getString("jobOwnerId"),
+                        job.getString("triggerType")),
                 new CommitInfoEntry.Notebook(
-                        getString(notebookBlock, 0)),
-                getString(commitInfoEntryBlock, 8),
-                getLong(commitInfoEntryBlock, 9),
-                getString(commitInfoEntryBlock, 10),
-                Optional.of(getByte(commitInfoEntryBlock, 11) != 0));
+                        notebook.getString("notebookId")),
+                commitInfo.getString("clusterId"),
+                commitInfo.getInt("readVersion"),
+                commitInfo.getString("isolationLevel"),
+                Optional.of(commitInfo.getBoolean("isBlindAppend")));
         log.debug("Result: %s", result);
         return DeltaLakeTransactionLogEntry.commitInfoEntry(result);
     }
@@ -317,21 +376,23 @@ public class CheckpointEntryIterator
         if (block.isNull(pagePosition)) {
             return null;
         }
+        RowType type = (RowType) parquetFields.get("protocol");
         int minProtocolFields = 2;
         int maxProtocolFields = 4;
-        Block protocolEntryBlock = block.getObject(pagePosition, Block.class);
-        log.debug("Block %s has %s fields", block, protocolEntryBlock.getPositionCount());
-        if (protocolEntryBlock.getPositionCount() < minProtocolFields || protocolEntryBlock.getPositionCount() > maxProtocolFields) {
+        SqlRow protocolEntryRow = block.getObject(pagePosition, SqlRow.class);
+        int fieldCount = protocolEntryRow.getFieldCount();
+        log.debug("Block %s has %s fields", block, fieldCount);
+        if (fieldCount < minProtocolFields || fieldCount > maxProtocolFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have between %d and %d children, but found %s", block, minProtocolFields, maxProtocolFields, protocolEntryBlock.getPositionCount()));
+                    format("Expected block %s to have between %d and %d children, but found %s", block, minProtocolFields, maxProtocolFields, fieldCount));
         }
-        // The last entry should be writer feature when protocol entry size is 3 https://github.com/delta-io/delta/blob/master/PROTOCOL.md#disabled-features
-        int position = 0;
+
+        CheckpointFieldReader protocol = new CheckpointFieldReader(session, protocolEntryRow, type);
         ProtocolEntry result = new ProtocolEntry(
-                getInt(protocolEntryBlock, position++),
-                getInt(protocolEntryBlock, position++),
-                protocolEntryBlock.getPositionCount() == 4 && protocolEntryBlock.isNull(position) ? Optional.empty() : Optional.of(getList(protocolEntryBlock, position++).stream().collect(toImmutableSet())),
-                protocolEntryBlock.isNull(position) ? Optional.empty() : Optional.of(getList(protocolEntryBlock, position++).stream().collect(toImmutableSet())));
+                protocol.getInt("minReaderVersion"),
+                protocol.getInt("minWriterVersion"),
+                protocol.getOptionalSet(stringList, "readerFeatures"),
+                protocol.getOptionalSet(stringList, "writerFeatures"));
         log.debug("Result: %s", result);
         return DeltaLakeTransactionLogEntry.protocolEntry(result);
     }
@@ -342,30 +403,35 @@ public class CheckpointEntryIterator
         if (block.isNull(pagePosition)) {
             return null;
         }
+        RowType type = (RowType) parquetFields.get("metadata");
         int metadataFields = 8;
         int formatFields = 2;
-        Block metadataEntryBlock = block.getObject(pagePosition, Block.class);
-        log.debug("Block %s has %s fields", block, metadataEntryBlock.getPositionCount());
-        if (metadataEntryBlock.getPositionCount() != metadataFields) {
+        SqlRow metadataEntryRow = block.getObject(pagePosition, SqlRow.class);
+        CheckpointFieldReader metadata = new CheckpointFieldReader(session, metadataEntryRow, type);
+        log.debug("Block %s has %s fields", block, metadataEntryRow.getFieldCount());
+        if (metadataEntryRow.getFieldCount() != metadataFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", block, metadataFields, metadataEntryBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", block, metadataFields, metadataEntryRow.getFieldCount()));
         }
-        Block formatBlock = metadataEntryBlock.getObject(3, Block.class);
-        if (formatBlock.getPositionCount() != formatFields) {
+        SqlRow formatRow = metadata.getRow("format");
+        if (formatRow.getFieldCount() != formatFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", formatBlock, formatFields, formatBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", formatRow, formatFields, formatRow.getFieldCount()));
         }
+
+        RowType.Field formatField = type.getFields().stream().filter(field -> field.getName().orElseThrow().equals("format")).collect(onlyElement());
+        CheckpointFieldReader format = new CheckpointFieldReader(session, formatRow, (RowType) formatField.getType());
         MetadataEntry result = new MetadataEntry(
-                getString(metadataEntryBlock, 0),
-                getString(metadataEntryBlock, 1),
-                getString(metadataEntryBlock, 2),
+                metadata.getString("id"),
+                metadata.getString("name"),
+                metadata.getString("description"),
                 new MetadataEntry.Format(
-                        getString(formatBlock, 0),
-                        getMap(formatBlock, 1)),
-                getString(metadataEntryBlock, 4),
-                getList(metadataEntryBlock, 5),
-                getMap(metadataEntryBlock, 6),
-                getLong(metadataEntryBlock, 7));
+                        format.getString("provider"),
+                        format.getMap(stringMap, "options")),
+                metadata.getString("schemaString"),
+                metadata.getList(stringList, "partitionColumns"),
+                metadata.getMap(stringMap, "configuration"),
+                metadata.getLong("createdTime"));
         log.debug("Result: %s", result);
         return DeltaLakeTransactionLogEntry.metadataEntry(result);
     }
@@ -376,17 +442,19 @@ public class CheckpointEntryIterator
         if (block.isNull(pagePosition)) {
             return null;
         }
+        RowType type = (RowType) parquetFields.get("remove");
         int removeFields = 3;
-        Block removeEntryBlock = block.getObject(pagePosition, Block.class);
-        log.debug("Block %s has %s fields", block, removeEntryBlock.getPositionCount());
-        if (removeEntryBlock.getPositionCount() != removeFields) {
+        SqlRow removeEntryRow = block.getObject(pagePosition, SqlRow.class);
+        log.debug("Block %s has %s fields", block, removeEntryRow.getFieldCount());
+        if (removeEntryRow.getFieldCount() != removeFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", block, removeFields, removeEntryBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", block, removeFields, removeEntryRow.getFieldCount()));
         }
+        CheckpointFieldReader remove = new CheckpointFieldReader(session, removeEntryRow, type);
         RemoveFileEntry result = new RemoveFileEntry(
-                getString(removeEntryBlock, 0),
-                getLong(removeEntryBlock, 1),
-                getByte(removeEntryBlock, 2) != 0);
+                remove.getString("path"),
+                remove.getLong("deletionTimestamp"),
+                remove.getBoolean("dataChange"));
         log.debug("Result: %s", result);
         return DeltaLakeTransactionLogEntry.removeFileEntry(result);
     }
@@ -397,100 +465,78 @@ public class CheckpointEntryIterator
         if (block.isNull(pagePosition)) {
             return null;
         }
-        boolean deletionVectorsEnabled = isDeletionVectorEnabled(metadataEntry);
-        Block addEntryBlock = block.getObject(pagePosition, Block.class);
-        log.debug("Block %s has %s fields", block, addEntryBlock.getPositionCount());
+        RowType type = (RowType) parquetFields.get("add");
+        boolean deletionVectorsEnabled = isDeletionVectorEnabled(metadataEntry, protocolEntry);
+        SqlRow addEntryRow = block.getObject(pagePosition, SqlRow.class);
+        log.debug("Block %s has %s fields", block, addEntryRow.getFieldCount());
+        CheckpointFieldReader add = new CheckpointFieldReader(session, addEntryRow, type);
 
-        String path = getString(addEntryBlock, 0);
-        Map<String, String> partitionValues = getMap(addEntryBlock, 1);
-        long size = getLong(addEntryBlock, 2);
-        long modificationTime = getLong(addEntryBlock, 3);
-        boolean dataChange = getByte(addEntryBlock, 4) != 0;
+        String path = add.getString("path");
+        Map<String, String> partitionValues = add.getMap(stringMap, "partitionValues");
+        long size = add.getLong("size");
+        long modificationTime = add.getLong("modificationTime");
+        boolean dataChange = add.getBoolean("dataChange");
+
         Optional<DeletionVectorEntry> deletionVector = Optional.empty();
-        int position = 5;
         if (deletionVectorsEnabled) {
-            if (!addEntryBlock.isNull(5)) {
-                deletionVector = Optional.of(parseDeletionVectorFromParquet(addEntryBlock.getObject(5, Block.class)));
-            }
-            position = 6;
+            deletionVector = Optional.ofNullable(add.getRow("deletionVector"))
+                    .map(row -> {
+                        RowType.Field deletionVectorField = type.getFields().stream().filter(field -> field.getName().orElseThrow().equals("deletionVector")).collect(onlyElement());
+                        return parseDeletionVectorFromParquet(session, row, (RowType) deletionVectorField.getType());
+                    });
         }
-        Map<String, String> tags = getMap(addEntryBlock, position + 2);
 
-        AddFileEntry result;
-        if (!addEntryBlock.isNull(position + 1)) {
-            result = new AddFileEntry(
-                    path,
-                    partitionValues,
-                    size,
-                    modificationTime,
-                    dataChange,
-                    Optional.empty(),
-                    Optional.of(parseStatisticsFromParquet(addEntryBlock.getObject(position + 1, Block.class))),
-                    tags,
-                    deletionVector);
+        Optional<DeltaLakeParquetFileStatistics> parsedStats = Optional.ofNullable(add.getRow("stats_parsed")).map(row -> {
+            RowType.Field parsedStatsField = type.getFields().stream().filter(field -> field.getName().orElseThrow().equals("stats_parsed")).collect(onlyElement());
+            return parseStatisticsFromParquet(session, row, (RowType) parsedStatsField.getType());
+        });
+        Optional<String> stats = Optional.empty();
+        if (parsedStats.isEmpty()) {
+            stats = Optional.ofNullable(add.getString("stats"));
         }
-        else if (!addEntryBlock.isNull(position)) {
-            result = new AddFileEntry(
-                    path,
-                    partitionValues,
-                    size,
-                    modificationTime,
-                    dataChange,
-                    Optional.of(getString(addEntryBlock, position)),
-                    Optional.empty(),
-                    tags,
-                    deletionVector);
-        }
-        else {
-            result = new AddFileEntry(
-                    path,
-                    partitionValues,
-                    size,
-                    modificationTime,
-                    dataChange,
-                    Optional.empty(),
-                    Optional.empty(),
-                    tags,
-                    deletionVector);
-        }
+
+        Map<String, String> tags = add.getMap(stringMap, "tags");
+        AddFileEntry result = new AddFileEntry(
+                path,
+                partitionValues,
+                size,
+                modificationTime,
+                dataChange,
+                stats,
+                parsedStats,
+                tags,
+                deletionVector);
 
         log.debug("Result: %s", result);
         return DeltaLakeTransactionLogEntry.addFileEntry(result);
     }
 
-    private DeletionVectorEntry parseDeletionVectorFromParquet(Block block)
+    private DeletionVectorEntry parseDeletionVectorFromParquet(ConnectorSession session, SqlRow row, RowType type)
     {
-        checkArgument(block.getPositionCount() == 5, "Deletion vector entry must have 5 fields");
+        checkArgument(row.getFieldCount() == 5, "Deletion vector entry must have 5 fields");
 
-        String storageType = getString(block, 0);
-        String pathOrInlineDv = getString(block, 1);
-        OptionalInt offset = block.isNull(2) ? OptionalInt.empty() : OptionalInt.of(getInt(block, 2));
-        int sizeInBytes = getInt(block, 3);
-        long cardinality = getLong(block, 4);
+        CheckpointFieldReader deletionVector = new CheckpointFieldReader(session, row, type);
+        String storageType = deletionVector.getString("storageType");
+        String pathOrInlineDv = deletionVector.getString("pathOrInlineDv");
+        OptionalInt offset = deletionVector.getOptionalInt("offset");
+        int sizeInBytes = deletionVector.getInt("sizeInBytes");
+        long cardinality = deletionVector.getLong("cardinality");
         return new DeletionVectorEntry(storageType, pathOrInlineDv, offset, sizeInBytes, cardinality);
     }
 
-    private DeltaLakeParquetFileStatistics parseStatisticsFromParquet(Block statsRowBlock)
+    private DeltaLakeParquetFileStatistics parseStatisticsFromParquet(ConnectorSession session, SqlRow statsRow, RowType type)
     {
-        if (metadataEntry == null) {
-            throw new TrinoException(DELTA_LAKE_BAD_DATA, "Checkpoint file found without metadata entry");
-        }
-        // Block ordering is determined by TransactionLogAccess#buildAddColumnHandle, using the same method to ensure blocks are matched with the correct column
-        List<DeltaLakeColumnMetadata> columnsWithMinMaxStats = columnsWithStats(schema, metadataEntry.getOriginalPartitionColumns());
-
-        long numRecords = getLong(statsRowBlock, 0);
+        CheckpointFieldReader stats = new CheckpointFieldReader(session, statsRow, type);
+        long numRecords = stats.getLong("numRecords");
 
         Optional<Map<String, Object>> minValues = Optional.empty();
         Optional<Map<String, Object>> maxValues = Optional.empty();
         Optional<Map<String, Object>> nullCount;
         if (!columnsWithMinMaxStats.isEmpty()) {
-            minValues = Optional.of(readMinMax(statsRowBlock, 1, columnsWithMinMaxStats));
-            maxValues = Optional.of(readMinMax(statsRowBlock, 2, columnsWithMinMaxStats));
-            nullCount = Optional.of(readNullCount(statsRowBlock, 3, schema));
+            minValues = Optional.of(parseMinMax(stats.getRow("minValues"), columnsWithMinMaxStats));
+            maxValues = Optional.of(parseMinMax(stats.getRow("maxValues"), columnsWithMinMaxStats));
         }
-        else {
-            nullCount = Optional.of(readNullCount(statsRowBlock, 1, schema));
-        }
+        nullCount = Optional.of(parseNullCount(stats.getRow("nullCount"), schema));
 
         return new DeltaLakeParquetFileStatistics(
                 Optional.of(numRecords),
@@ -499,14 +545,13 @@ public class CheckpointEntryIterator
                 nullCount);
     }
 
-    private Map<String, Object> readMinMax(Block block, int blockPosition, List<DeltaLakeColumnMetadata> eligibleColumns)
+    private ImmutableMap<String, Object> parseMinMax(@Nullable SqlRow row, List<DeltaLakeColumnMetadata> eligibleColumns)
     {
-        if (block.isNull(blockPosition)) {
+        if (row == null) {
             // Statistics were not collected
             return ImmutableMap.of();
         }
 
-        Block valuesBlock = block.getObject(blockPosition, Block.class);
         ImmutableMap.Builder<String, Object> values = ImmutableMap.builder();
 
         for (int i = 0; i < eligibleColumns.size(); i++) {
@@ -514,53 +559,55 @@ public class CheckpointEntryIterator
             String name = metadata.getPhysicalName();
             Type type = metadata.getPhysicalColumnType();
 
-            if (valuesBlock.isNull(i)) {
+            ValueBlock fieldBlock = row.getUnderlyingFieldBlock(i);
+            int fieldIndex = row.getUnderlyingFieldPosition(i);
+            if (fieldBlock.isNull(fieldIndex)) {
                 continue;
             }
-            if (type instanceof RowType) {
+            if (type instanceof RowType rowType) {
                 if (checkpointRowStatisticsWritingEnabled) {
                     // RowType column statistics are not used for query planning, but need to be copied when writing out new Checkpoint files.
-                    values.put(name, valuesBlock.getSingleValueBlock(i));
+                    values.put(name, rowType.getObject(fieldBlock, fieldIndex));
                 }
                 continue;
             }
             if (type instanceof TimestampWithTimeZoneType) {
-                long epochMillis = LongMath.divide((long) readNativeValue(TIMESTAMP_MILLIS, valuesBlock, i), MICROSECONDS_PER_MILLISECOND, UNNECESSARY);
+                long epochMillis = LongMath.divide((long) readNativeValue(TIMESTAMP_MILLIS, fieldBlock, fieldIndex), MICROSECONDS_PER_MILLISECOND, UNNECESSARY);
                 if (floorDiv(epochMillis, MILLISECONDS_PER_DAY) >= START_OF_MODERN_ERA_EPOCH_DAY) {
                     values.put(name, packDateTimeWithZone(epochMillis, UTC_KEY));
                 }
                 continue;
             }
-            values.put(name, readNativeValue(type, valuesBlock, i));
+            values.put(name, readNativeValue(type, fieldBlock, fieldIndex));
         }
         return values.buildOrThrow();
     }
 
-    private Map<String, Object> readNullCount(Block block, int blockPosition, List<DeltaLakeColumnMetadata> columns)
+    private Map<String, Object> parseNullCount(SqlRow row, List<DeltaLakeColumnMetadata> columns)
     {
-        if (block.isNull(blockPosition)) {
+        if (row == null) {
             // Statistics were not collected
             return ImmutableMap.of();
         }
 
-        Block valuesBlock = block.getObject(blockPosition, Block.class);
         ImmutableMap.Builder<String, Object> values = ImmutableMap.builder();
-
         for (int i = 0; i < columns.size(); i++) {
             DeltaLakeColumnMetadata metadata = columns.get(i);
 
-            if (valuesBlock.isNull(i)) {
+            ValueBlock fieldBlock = row.getUnderlyingFieldBlock(i);
+            int fieldIndex = row.getUnderlyingFieldPosition(i);
+            if (fieldBlock.isNull(fieldIndex)) {
                 continue;
             }
             if (metadata.getType() instanceof RowType) {
                 if (checkpointRowStatisticsWritingEnabled) {
                     // RowType column statistics are not used for query planning, but need to be copied when writing out new Checkpoint files.
-                    values.put(metadata.getPhysicalName(), valuesBlock.getSingleValueBlock(i));
+                    values.put(metadata.getPhysicalName(), fieldBlock.getObject(fieldIndex, SqlRow.class));
                 }
                 continue;
             }
 
-            values.put(metadata.getPhysicalName(), getLong(valuesBlock, i));
+            values.put(metadata.getPhysicalName(), getLongField(row, i));
         }
         return values.buildOrThrow();
     }
@@ -571,87 +618,46 @@ public class CheckpointEntryIterator
         if (block.isNull(pagePosition)) {
             return null;
         }
+        RowType type = (RowType) parquetFields.get("txn");
         int txnFields = 3;
-        Block txnEntryBlock = block.getObject(pagePosition, Block.class);
-        log.debug("Block %s has %s fields", block, txnEntryBlock.getPositionCount());
-        if (txnEntryBlock.getPositionCount() != txnFields) {
+        SqlRow txnEntryRow = block.getObject(pagePosition, SqlRow.class);
+        log.debug("Block %s has %s fields", block, txnEntryRow.getFieldCount());
+        if (txnEntryRow.getFieldCount() != txnFields) {
             throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA,
-                    format("Expected block %s to have %d children, but found %s", block, txnFields, txnEntryBlock.getPositionCount()));
+                    format("Expected block %s to have %d children, but found %s", block, txnFields, txnEntryRow.getFieldCount()));
         }
+        CheckpointFieldReader txn = new CheckpointFieldReader(session, txnEntryRow, type);
         TransactionEntry result = new TransactionEntry(
-                getString(txnEntryBlock, 0),
-                getLong(txnEntryBlock, 1),
-                getLong(txnEntryBlock, 2));
+                txn.getString("appId"),
+                txn.getLong("version"),
+                txn.getLong("lastUpdated"));
         log.debug("Result: %s", result);
         return DeltaLakeTransactionLogEntry.transactionEntry(result);
     }
 
-    @Nullable
-    private String getString(Block block, int position)
+    private static long getLongField(SqlRow row, int field)
     {
-        if (block.isNull(position)) {
-            return null;
-        }
-        return block.getSlice(position, 0, block.getSliceLength(position)).toString(UTF_8);
-    }
-
-    private long getLong(Block block, int position)
-    {
-        checkArgument(!block.isNull(position));
-        return block.getLong(position, 0);
-    }
-
-    private int getInt(Block block, int position)
-    {
-        checkArgument(!block.isNull(position));
-        return block.getInt(position, 0);
-    }
-
-    private byte getByte(Block block, int position)
-    {
-        checkArgument(!block.isNull(position));
-        return block.getByte(position, 0);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, String> getMap(Block block, int position)
-    {
-        return (Map<String, String>) stringMap.getObjectValue(session, block, position);
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<String> getList(Block block, int position)
-    {
-        return (List<String>) stringList.getObjectValue(session, block, position);
+        LongArrayBlock valueBlock = (LongArrayBlock) row.getUnderlyingFieldBlock(field);
+        return valueBlock.getLong(row.getUnderlyingFieldPosition(field));
     }
 
     @Override
-    public boolean hasNext()
+    protected DeltaLakeTransactionLogEntry computeNext()
     {
         if (nextEntries.isEmpty()) {
             fillNextEntries();
         }
-        return !nextEntries.isEmpty();
-    }
-
-    @Override
-    public DeltaLakeTransactionLogEntry next()
-    {
-        if (!hasNext()) {
-            throw new NoSuchElementException();
+        if (!nextEntries.isEmpty()) {
+            return nextEntries.remove();
         }
-        return nextEntries.remove();
+        pageSource.close();
+        return endOfData();
     }
 
     private boolean tryAdvancePage()
     {
         if (pageSource.isFinished()) {
-            try {
-                pageSource.close();
-            }
-            catch (IOException ioe) {
-                throw new UncheckedIOException(ioe);
-            }
+            pageSource.close();
             return false;
         }
         page = pageSource.getNextPage();
@@ -682,7 +688,15 @@ public class CheckpointEntryIterator
             for (int i = 0; i < extractors.size(); ++i) {
                 DeltaLakeTransactionLogEntry entry = extractors.get(i).getEntry(session, page.getBlock(i).getLoadedBlock(), pagePosition);
                 if (entry != null) {
-                    nextEntries.add(entry);
+                    if (entry.getAdd() != null) {
+                        if (partitionConstraint.isAll() ||
+                                partitionMatchesPredicate(entry.getAdd().getCanonicalPartitionValues(), partitionConstraint.getDomains().orElseThrow())) {
+                            nextEntries.add(entry);
+                        }
+                    }
+                    else {
+                        nextEntries.add(entry);
+                    }
                 }
             }
             pagePosition++;
@@ -693,6 +707,12 @@ public class CheckpointEntryIterator
     OptionalLong getCompletedPositions()
     {
         return pageSource.getCompletedPositions();
+    }
+
+    @VisibleForTesting
+    long getCompletedBytes()
+    {
+        return pageSource.getCompletedBytes();
     }
 
     @FunctionalInterface

@@ -15,7 +15,7 @@ package io.trino.hdfs.s3;
 
 import io.trino.filesystem.Location;
 import org.apache.hadoop.fs.Path;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 
@@ -67,5 +67,15 @@ public class TestS3HadoopPaths
                 .hasToString("s3://test/abc%xyz/test#abc%xyz//test")
                 .extracting(TrinoS3FileSystem::keyFromPath)
                 .isEqualTo("abc%xyz//test");
+    }
+
+    @Test
+    public void testS3NonCanonicalPathWithDotDigitBucketName()
+    {
+        assertThat(hadoopPath(Location.of("s3://test.123/abc//xyz.csv")))
+                .isEqualTo(new Path(URI.create("s3://test.123/abc/xyz.csv#abc//xyz.csv")))
+                .hasToString("s3://test.123/abc/xyz.csv#abc//xyz.csv")
+                .extracting(TrinoS3FileSystem::keyFromPath)
+                .isEqualTo("abc//xyz.csv");
     }
 }

@@ -22,9 +22,10 @@ import io.trino.plugin.hive.HiveType;
 import io.trino.plugin.hive.PartitionStatistics;
 import io.trino.plugin.hive.acid.AcidTransaction;
 import io.trino.plugin.hive.fs.FileSystemDirectoryLister;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
@@ -35,22 +36,23 @@ import java.util.stream.IntStream;
 
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static io.trino.plugin.hive.HiveBasicStatistics.createEmptyStatistics;
-import static io.trino.plugin.hive.HiveTestUtils.HDFS_ENVIRONMENT;
+import static io.trino.plugin.hive.HiveTestUtils.HDFS_FILE_SYSTEM_FACTORY;
 import static io.trino.plugin.hive.acid.AcidOperation.INSERT;
 import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V1;
 import static io.trino.testing.TestingConnectorSession.SESSION;
+import static io.trino.type.InternalTypeManager.TESTING_TYPE_MANAGER;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
-import static org.testng.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 
 // countDownLatch field is shared between tests
-@Test(singleThreaded = true)
 public class TestSemiTransactionalHiveMetastore
 {
     private static final Column TABLE_COLUMN = new Column(
             "column",
             HiveType.HIVE_INT,
-            Optional.of("comment"));
+            Optional.of("comment"),
+            Map.of());
     private static final Storage TABLE_STORAGE = new Storage(
             StorageFormat.create("serde", "input", "output"),
             Optional.of("/test"),
@@ -79,8 +81,9 @@ public class TestSemiTransactionalHiveMetastore
 
     private SemiTransactionalHiveMetastore getSemiTransactionalHiveMetastoreWithDropExecutor(Executor dropExecutor)
     {
-        return new SemiTransactionalHiveMetastore(HDFS_ENVIRONMENT,
-                new HiveMetastoreClosure(new TestingHiveMetastore()),
+        return new SemiTransactionalHiveMetastore(
+                HDFS_FILE_SYSTEM_FACTORY,
+                new HiveMetastoreClosure(new TestingHiveMetastore(), TESTING_TYPE_MANAGER, false),
                 directExecutor(),
                 dropExecutor,
                 directExecutor(),
@@ -119,8 +122,9 @@ public class TestSemiTransactionalHiveMetastore
 
     private SemiTransactionalHiveMetastore getSemiTransactionalHiveMetastoreWithUpdateExecutor(Executor updateExecutor)
     {
-        return new SemiTransactionalHiveMetastore(HDFS_ENVIRONMENT,
-                new HiveMetastoreClosure(new TestingHiveMetastore()),
+        return new SemiTransactionalHiveMetastore(
+                HDFS_FILE_SYSTEM_FACTORY,
+                new HiveMetastoreClosure(new TestingHiveMetastore(), TESTING_TYPE_MANAGER, false),
                 directExecutor(),
                 directExecutor(),
                 updateExecutor,
@@ -180,7 +184,7 @@ public class TestSemiTransactionalHiveMetastore
         {
             try {
                 countDownLatch.countDown();
-                assertTrue(countDownLatch.await(10, TimeUnit.SECONDS)); //all other threads launched should count down within 10 seconds
+                assertThat(countDownLatch.await(10, TimeUnit.SECONDS)).isTrue(); //all other threads launched should count down within 10 seconds
             }
             catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();

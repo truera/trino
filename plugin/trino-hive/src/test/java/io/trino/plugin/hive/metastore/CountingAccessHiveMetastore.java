@@ -22,19 +22,24 @@ import io.trino.plugin.hive.HiveType;
 import io.trino.plugin.hive.PartitionStatistics;
 import io.trino.plugin.hive.acid.AcidTransaction;
 import io.trino.plugin.hive.metastore.HivePrivilegeInfo.HivePrivilege;
+import io.trino.spi.connector.RelationType;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.spi.function.LanguageFunction;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.RoleGrant;
 import io.trino.spi.type.Type;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
+import static io.trino.plugin.hive.metastore.CountingAccessHiveMetastore.Method.GET_ALL_RELATION_TYPES;
 import static io.trino.plugin.hive.metastore.CountingAccessHiveMetastore.Method.GET_ALL_TABLES;
 import static io.trino.plugin.hive.metastore.CountingAccessHiveMetastore.Method.GET_ALL_VIEWS;
+import static io.trino.plugin.hive.metastore.CountingAccessHiveMetastore.Method.GET_RELATION_TYPES_FROM_DATABASE;
 
 @ThreadSafe
 public class CountingAccessHiveMetastore
@@ -43,12 +48,15 @@ public class CountingAccessHiveMetastore
     public enum Method
     {
         CREATE_DATABASE,
+        DROP_DATABASE,
         CREATE_TABLE,
         GET_ALL_DATABASES,
         GET_DATABASE,
         GET_TABLE,
         GET_ALL_TABLES,
         GET_ALL_TABLES_FROM_DATABASE,
+        GET_RELATION_TYPES_FROM_DATABASE,
+        GET_ALL_RELATION_TYPES,
         GET_TABLES_WITH_PARAMETER,
         GET_TABLE_STATISTICS,
         GET_ALL_VIEWS,
@@ -144,7 +152,8 @@ public class CountingAccessHiveMetastore
     @Override
     public void dropDatabase(String databaseName, boolean deleteData)
     {
-        throw new UnsupportedOperationException();
+        methodInvocations.add(Method.DROP_DATABASE);
+        delegate.dropDatabase(databaseName, deleteData);
     }
 
     @Override
@@ -296,12 +305,6 @@ public class CountingAccessHiveMetastore
     }
 
     @Override
-    public Set<RoleGrant> listGrantedPrincipals(String role)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public Set<RoleGrant> listRoleGrants(HivePrincipal principal)
     {
         throw new UnsupportedOperationException();
@@ -371,5 +374,58 @@ public class CountingAccessHiveMetastore
             methodInvocations.add(GET_ALL_TABLES);
         }
         return allTables;
+    }
+
+    @Override
+    public Map<String, RelationType> getRelationTypes(String databaseName)
+    {
+        methodInvocations.add(GET_RELATION_TYPES_FROM_DATABASE);
+        return delegate.getRelationTypes(databaseName);
+    }
+
+    @Override
+    public Optional<Map<SchemaTableName, RelationType>> getRelationTypes()
+    {
+        Optional<Map<SchemaTableName, RelationType>> relationTypes = delegate.getRelationTypes();
+        if (relationTypes.isPresent()) {
+            methodInvocations.add(GET_ALL_RELATION_TYPES);
+        }
+        return relationTypes;
+    }
+
+    @Override
+    public boolean functionExists(String databaseName, String functionName, String signatureToken)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Collection<LanguageFunction> getFunctions(String databaseName)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Collection<LanguageFunction> getFunctions(String databaseName, String functionName)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void createFunction(String databaseName, String functionName, LanguageFunction function)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void replaceFunction(String databaseName, String functionName, LanguageFunction function)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void dropFunction(String databaseName, String functionName, String signatureToken)
+    {
+        throw new UnsupportedOperationException();
     }
 }

@@ -30,6 +30,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.parallel.Execution;
 
 import java.util.HashMap;
 import java.util.List;
@@ -68,8 +69,10 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
+import static org.junit.jupiter.api.parallel.ExecutionMode.CONCURRENT;
 
 @TestInstance(PER_CLASS)
+@Execution(CONCURRENT)
 public class TestMapOperators
 {
     private QueryAssertions assertions;
@@ -1324,6 +1327,9 @@ public class TestMapOperators
     @Test
     public void testDistinctFrom()
     {
+        assertThat(assertions.operator(IS_DISTINCT_FROM, "MAP(ARRAY[1], ARRAY[0])", "MAP(ARRAY[1], ARRAY[NULL])"))
+                .isEqualTo(true);
+
         assertThat(assertions.operator(IS_DISTINCT_FROM, "CAST(NULL AS MAP(INTEGER, VARCHAR))", "CAST(NULL AS MAP(INTEGER, VARCHAR))"))
                 .isEqualTo(false);
 

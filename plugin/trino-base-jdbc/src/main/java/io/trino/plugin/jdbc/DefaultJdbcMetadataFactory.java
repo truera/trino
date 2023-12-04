@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.jdbc;
 
+import com.google.common.base.Ticker;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
 import io.airlift.units.Duration;
@@ -28,14 +29,11 @@ public class DefaultJdbcMetadataFactory
     private final JdbcClient jdbcClient;
     private final Set<JdbcQueryEventListener> jdbcQueryEventListeners;
 
-    protected final SyntheticColumnHandleBuilder syntheticColumnBuilder;
-
     @Inject
-    public DefaultJdbcMetadataFactory(JdbcClient jdbcClient, Set<JdbcQueryEventListener> jdbcQueryEventListeners, SyntheticColumnHandleBuilder syntheticColumnBuilder)
+    public DefaultJdbcMetadataFactory(JdbcClient jdbcClient, Set<JdbcQueryEventListener> jdbcQueryEventListeners)
     {
         this.jdbcClient = requireNonNull(jdbcClient, "jdbcClient is null");
         this.jdbcQueryEventListeners = ImmutableSet.copyOf(requireNonNull(jdbcQueryEventListeners, "queryEventListeners is null"));
-        this.syntheticColumnBuilder = requireNonNull(syntheticColumnBuilder, "syntheticColumnBuilder is null");
     }
 
     @Override
@@ -44,16 +42,20 @@ public class DefaultJdbcMetadataFactory
         // Session stays the same per transaction, therefore session properties don't need to
         // be a part of cache keys in CachingJdbcClient.
         return create(new CachingJdbcClient(
-                        jdbcClient,
-                        Set.of(),
-                        new SingletonIdentityCacheMapping(),
-                        new Duration(1, DAYS),
-                        true,
-                        Integer.MAX_VALUE));
+                Ticker.systemTicker(),
+                jdbcClient,
+                Set.of(),
+                new SingletonIdentityCacheMapping(),
+                new Duration(1, DAYS),
+                new Duration(1, DAYS),
+                new Duration(1, DAYS),
+                new Duration(1, DAYS),
+                true,
+                Integer.MAX_VALUE));
     }
 
     protected JdbcMetadata create(JdbcClient transactionCachingJdbcClient)
     {
-        return new DefaultJdbcMetadata(transactionCachingJdbcClient, true, jdbcQueryEventListeners, syntheticColumnBuilder);
+        return new DefaultJdbcMetadata(transactionCachingJdbcClient, true, jdbcQueryEventListeners);
     }
 }

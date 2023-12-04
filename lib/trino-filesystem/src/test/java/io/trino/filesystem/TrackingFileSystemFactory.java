@@ -32,10 +32,11 @@ import java.util.function.Consumer;
 import static com.google.common.base.Verify.verify;
 import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.INPUT_FILE_EXISTS;
 import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.INPUT_FILE_GET_LENGTH;
+import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.INPUT_FILE_LAST_MODIFIED;
 import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.INPUT_FILE_NEW_STREAM;
 import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.OUTPUT_FILE_CREATE;
+import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.OUTPUT_FILE_CREATE_EXCLUSIVE;
 import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.OUTPUT_FILE_CREATE_OR_OVERWRITE;
-import static io.trino.filesystem.TrackingFileSystemFactory.OperationType.OUTPUT_FILE_LOCATION;
 import static java.util.Objects.requireNonNull;
 
 public class TrackingFileSystemFactory
@@ -48,8 +49,9 @@ public class TrackingFileSystemFactory
         INPUT_FILE_EXISTS,
         OUTPUT_FILE_CREATE,
         OUTPUT_FILE_CREATE_OR_OVERWRITE,
-        OUTPUT_FILE_LOCATION,
+        OUTPUT_FILE_CREATE_EXCLUSIVE,
         OUTPUT_FILE_TO_INPUT_FILE,
+        INPUT_FILE_LAST_MODIFIED,
     }
 
     private final AtomicInteger fileId = new AtomicInteger();
@@ -192,6 +194,13 @@ public class TrackingFileSystemFactory
         {
             return delegate.listDirectories(location);
         }
+
+        @Override
+        public Optional<Location> createTemporaryDirectory(Location targetPath, String temporaryPrefix, String relativePrefix)
+                throws IOException
+        {
+            return delegate.createTemporaryDirectory(targetPath, temporaryPrefix, relativePrefix);
+        }
     }
 
     private static class TrackingInputFile
@@ -251,6 +260,7 @@ public class TrackingFileSystemFactory
         public Instant lastModified()
                 throws IOException
         {
+            tracker.accept(INPUT_FILE_LAST_MODIFIED);
             return delegate.lastModified();
         }
 
@@ -296,9 +306,17 @@ public class TrackingFileSystemFactory
         }
 
         @Override
+        public OutputStream createExclusive(AggregatedMemoryContext memoryContext)
+                throws IOException
+        {
+            tracker.accept(OUTPUT_FILE_CREATE_EXCLUSIVE);
+            return delegate.createExclusive(memoryContext);
+        }
+
+        @Override
         public Location location()
         {
-            tracker.accept(OUTPUT_FILE_LOCATION);
+            // Not tracked because it's a cheap local operation
             return delegate.location();
         }
 

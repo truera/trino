@@ -18,7 +18,6 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
-import io.trino.sql.parser.ParsingOptions;
 import io.trino.sql.parser.SqlParser;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -34,7 +33,7 @@ import static io.trino.testing.assertions.TrinoExceptionAssert.assertTrinoExcept
 import static java.lang.String.format;
 import static java.lang.String.join;
 import static java.util.Collections.nCopies;
-import static org.testng.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestHiveQlTranslation
 {
@@ -257,14 +256,14 @@ public class TestHiveQlTranslation
     private void assertTranslation(String hiveSql, String expectedTrinoSql)
     {
         String actualTrinoSql = translateHiveViewToTrino(hiveSql);
-        assertEquals(actualTrinoSql, expectedTrinoSql);
+        assertThat(actualTrinoSql).isEqualTo(expectedTrinoSql);
         assertTrinoSqlIsParsable(expectedTrinoSql);
         assertTrinoSqlIsParsable(actualTrinoSql);
     }
 
     private void assertTrinoSqlIsParsable(String actualTrinoSql)
     {
-        parser.createStatement(actualTrinoSql, new ParsingOptions());
+        parser.createStatement(actualTrinoSql);
     }
 
     private void assertViewTranslationError(String badHiveQl, String expectMessage)

@@ -1,7 +1,7 @@
 # Data types
 
-Trino has a set of built-in data types, described below.
-Additional types can be provided by plugins.
+Trino has a set of built-in data types, described below. Additional types can be
+[provided by plugins](/develop/types).
 
 (type-mapping-overview)=
 
@@ -104,11 +104,10 @@ IEEE Standard 754 for Binary Floating-Point Arithmetic.
 
 Example literals: `DOUBLE '10.3'`, `DOUBLE '1.03e1'`, `10.3e0`, `1.03e1`
 
-(fixed-precision-data-types)=
+(exact-numeric-data-types)=
+## Exact numeric
 
-## Fixed-precision
-
-Fixed-precision numbers can be expressed as numeric literals such as `1.1`, and
+Exact numeric values can be expressed as numeric literals such as `1.1`, and
 are supported by the `DECIMAL` data type.
 
 Underscore characters are ignored within literal values, and can be used to
@@ -121,8 +120,8 @@ Leading zeros in literal values are permitted and ignored. For example,
 
 ### `DECIMAL`
 
-A fixed-precision decimal number. Precision up to 38 digits is supported
-but performance is best up to 18 digits.
+A exact decimal number. Precision up to 38 digits is supported but performance
+is best up to 18 digits.
 
 The decimal type takes two literal parameters:
 
@@ -271,12 +270,13 @@ SELECT cast(TIMESTAMP '2020-06-10 15:55:23.383345' as TIMESTAMP(12));
 `TIMESTAMP WITH TIME ZONE` is an alias for `TIMESTAMP(3) WITH TIME ZONE`
 (millisecond precision).
 
+(timestamp-p-with-time-zone-data-type)=
 ### `TIMESTAMP(P) WITH TIME ZONE`
 
 Instant in time that includes the date and time of day with `P` digits of
-precision for the fraction of seconds and with a time zone. Values of this
-type are rendered using the time zone from the value.
-Time zones can be expressed in the following ways:
+precision for the fraction of seconds and with a time zone. Values of this type
+are rendered using the time zone from the value. Time zones can be expressed in
+the following ways:
 
 - `UTC`, with `GMT`, `Z`, or `UT` usable as aliases for UTC.
 - `+hh:mm` or `-hh:mm` with `hh:mm` as an hour and minute offset from UTC.

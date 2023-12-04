@@ -34,19 +34,17 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.PrincipalType;
 import io.trino.testing.MaterializedResult;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hive.metastore.TableType;
-import org.testng.SkipException;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.net.URI;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,14 +52,15 @@ import java.util.OptionalInt;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
-import static io.trino.plugin.hive.HiveMetadata.PRESTO_QUERY_ID_NAME;
-import static io.trino.plugin.hive.HiveMetadata.PRESTO_VERSION_NAME;
 import static io.trino.plugin.hive.HiveMetadata.TABLE_COMMENT;
+import static io.trino.plugin.hive.HiveMetadata.TRINO_QUERY_ID_NAME;
+import static io.trino.plugin.hive.HiveMetadata.TRINO_VERSION_NAME;
 import static io.trino.plugin.hive.HiveStorageFormat.ORC;
 import static io.trino.plugin.hive.HiveStorageFormat.TEXTFILE;
 import static io.trino.plugin.hive.HiveTestUtils.HDFS_ENVIRONMENT;
 import static io.trino.plugin.hive.HiveType.HIVE_INT;
 import static io.trino.plugin.hive.HiveType.HIVE_STRING;
+import static io.trino.plugin.hive.TableType.EXTERNAL_TABLE;
 import static io.trino.plugin.hive.TableType.MANAGED_TABLE;
 import static io.trino.plugin.hive.metastore.PrincipalPrivileges.NO_PRIVILEGES;
 import static io.trino.plugin.hive.metastore.StorageFormat.fromHiveStorageFormat;
@@ -69,8 +68,11 @@ import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING
 import static io.trino.plugin.hive.util.HiveUtil.SPARK_TABLE_PROVIDER_KEY;
 import static java.nio.file.Files.copy;
 import static java.util.Objects.requireNonNull;
-import static org.testng.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.abort;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
 
+@TestInstance(PER_CLASS)
 public abstract class AbstractTestHiveLocal
         extends AbstractTestHive
 {
@@ -92,7 +94,7 @@ public abstract class AbstractTestHiveLocal
 
     protected abstract HiveMetastore createMetastore(File tempDir);
 
-    @BeforeClass(alwaysRun = true)
+    @BeforeAll
     public void initialize()
             throws Exception
     {
@@ -119,8 +121,8 @@ public abstract class AbstractTestHiveLocal
     protected void createTestTables()
             throws Exception
     {
-        Location location = Location.of((metastoreClient.getDatabase(database).orElseThrow()
-                .getLocation().orElseThrow()));
+        Location location = Location.of(metastoreClient.getDatabase(database).orElseThrow()
+                .getLocation().orElseThrow());
 
         createTestTable(
                 // Matches create-test.sql » trino_test_partition_format
@@ -170,7 +172,7 @@ public abstract class AbstractTestHiveLocal
         metastoreClient.createTable(table, NO_PRIVILEGES);
     }
 
-    @AfterClass(alwaysRun = true)
+    @AfterAll
     public void cleanup()
             throws IOException
     {
@@ -191,31 +193,35 @@ public abstract class AbstractTestHiveLocal
         if (tableName.getTableName().startsWith(TEMPORARY_TABLE_PREFIX)) {
             return super.getTableHandle(metadata, tableName);
         }
-        throw new SkipException("tests using existing tables are not supported");
+        return abort("tests using existing tables are not supported");
     }
 
+    @Test
     @Override
     public void testGetAllTableColumns()
     {
-        throw new SkipException("Test disabled for this subclass");
+        abort("Test disabled for this subclass");
     }
 
+    @Test
     @Override
     public void testGetAllTableColumnsInSchema()
     {
-        throw new SkipException("Test disabled for this subclass");
+        abort("Test disabled for this subclass");
     }
 
+    @Test
     @Override
     public void testGetTableNames()
     {
-        throw new SkipException("Test disabled for this subclass");
+        abort("Test disabled for this subclass");
     }
 
+    @Test
     @Override
     public void testGetTableSchemaOffline()
     {
-        throw new SkipException("Test disabled for this subclass");
+        abort("Test disabled for this subclass");
     }
 
     @Test
@@ -234,23 +240,23 @@ public abstract class AbstractTestHiveLocal
     private void doTestSparkBucketedTableValidation(SchemaTableName tableName)
             throws Exception
     {
-        java.nio.file.Path externalLocation = copyResourceDirToTemporaryDirectory("spark_bucketed_nation");
+        Path externalLocation = copyResourceDirToTemporaryDirectory("spark_bucketed_nation");
         try {
             createExternalTable(
                     tableName,
                     ORC,
                     ImmutableList.of(
-                            new Column("nationkey", HIVE_INT, Optional.empty()),
-                            new Column("name", HIVE_STRING, Optional.empty()),
-                            new Column("regionkey", HIVE_INT, Optional.empty()),
-                            new Column("comment", HIVE_STRING, Optional.empty())),
+                            new Column("nationkey", HIVE_INT, Optional.empty(), Map.of()),
+                            new Column("name", HIVE_STRING, Optional.empty(), Map.of()),
+                            new Column("regionkey", HIVE_INT, Optional.empty(), Map.of()),
+                            new Column("comment", HIVE_STRING, Optional.empty(), Map.of())),
                     ImmutableList.of(),
                     Optional.of(new HiveBucketProperty(
                             ImmutableList.of("nationkey"),
                             BUCKETING_V1,
                             3,
                             ImmutableList.of(new SortingColumn("name", SortingColumn.Order.ASCENDING)))),
-                    new Path(URI.create("file://" + externalLocation.toString())));
+                    Location.of(externalLocation.toUri().toString()));
 
             assertReadFailsWithMessageMatching(ORC, tableName, "Hive table is corrupt\\. File '.*/.*' is for bucket [0-2], but contains a row for bucket [0-2].");
             markTableAsCreatedBySpark(tableName, "orc");
@@ -271,7 +277,7 @@ public abstract class AbstractTestHiveLocal
             ConnectorTableHandle tableHandle = getTableHandle(metadata, tableName);
             List<ColumnHandle> columnHandles = filterNonHiddenColumnHandles(metadata.getColumnHandles(session, tableHandle).values());
             MaterializedResult result = readTable(transaction, tableHandle, columnHandles, session, TupleDomain.all(), OptionalInt.empty(), Optional.of(storageFormat));
-            assertEquals(result.getRowCount(), rowCount);
+            assertThat(result.getRowCount()).isEqualTo(rowCount);
         }
     }
 
@@ -287,7 +293,7 @@ public abstract class AbstractTestHiveLocal
         }
     }
 
-    private void createExternalTable(SchemaTableName schemaTableName, HiveStorageFormat hiveStorageFormat, List<Column> columns, List<Column> partitionColumns, Optional<HiveBucketProperty> bucketProperty, Path externalLocation)
+    private void createExternalTable(SchemaTableName schemaTableName, HiveStorageFormat hiveStorageFormat, List<Column> columns, List<Column> partitionColumns, Optional<HiveBucketProperty> bucketProperty, Location externalLocation)
     {
         try (Transaction transaction = newTransaction()) {
             ConnectorSession session = newSession();
@@ -300,10 +306,10 @@ public abstract class AbstractTestHiveLocal
                     .setDatabaseName(schemaName)
                     .setTableName(tableName)
                     .setOwner(Optional.of(tableOwner))
-                    .setTableType(TableType.EXTERNAL_TABLE.name())
+                    .setTableType(EXTERNAL_TABLE.name())
                     .setParameters(ImmutableMap.of(
-                            PRESTO_VERSION_NAME, TEST_SERVER_VERSION,
-                            PRESTO_QUERY_ID_NAME, session.getQueryId()))
+                            TRINO_VERSION_NAME, TEST_SERVER_VERSION,
+                            TRINO_QUERY_ID_NAME, session.getQueryId()))
                     .setDataColumns(columns)
                     .setPartitionColumns(partitionColumns);
 
@@ -320,17 +326,17 @@ public abstract class AbstractTestHiveLocal
         }
     }
 
-    private java.nio.file.Path copyResourceDirToTemporaryDirectory(String resourceName)
+    private Path copyResourceDirToTemporaryDirectory(String resourceName)
             throws IOException
     {
-        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory(getClass().getSimpleName()).normalize();
+        Path tempDir = java.nio.file.Files.createTempDirectory(getClass().getSimpleName()).normalize();
         log.info("Copying resource dir '%s' to %s", resourceName, tempDir);
         ClassPath.from(getClass().getClassLoader())
                 .getResources().stream()
                 .filter(resourceInfo -> resourceInfo.getResourceName().startsWith(resourceName))
                 .forEach(resourceInfo -> {
                     try {
-                        java.nio.file.Path target = tempDir.resolve(resourceInfo.getResourceName());
+                        Path target = tempDir.resolve(resourceInfo.getResourceName());
                         java.nio.file.Files.createDirectories(target.getParent());
                         try (InputStream inputStream = resourceInfo.asByteSource().openStream()) {
                             copy(inputStream, target);

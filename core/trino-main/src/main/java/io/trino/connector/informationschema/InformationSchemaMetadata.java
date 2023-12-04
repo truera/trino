@@ -196,7 +196,7 @@ public class InformationSchemaMetadata
         }
 
         table = new InformationSchemaTableHandle(table.getCatalogName(), table.getTable(), prefixes, table.getLimit());
-        return Optional.of(new ConstraintApplicationResult<>(table, constraint.getSummary(), false));
+        return Optional.of(new ConstraintApplicationResult<>(table, constraint.getSummary(), constraint.getExpression(), false));
     }
 
     public static Set<QualifiedTablePrefix> defaultPrefixes(String catalogName)
@@ -234,11 +234,15 @@ public class InformationSchemaMetadata
     {
         Optional<Set<String>> schemas = filterString(constraint, SCHEMA_COLUMN_HANDLE);
         if (schemas.isPresent()) {
-            return schemas.get().stream()
+            Set<QualifiedTablePrefix> schemasFromPredicate = schemas.get().stream()
                     .filter(this::isLowerCase)
                     .filter(schema -> predicate.isEmpty() || predicate.get().test(schemaAsFixedValues(schema)))
                     .map(schema -> new QualifiedTablePrefix(catalogName, schema))
                     .collect(toImmutableSet());
+            if (schemasFromPredicate.size() > maxPrefetchedInformationSchemaPrefixes) {
+                return ImmutableSet.of(new QualifiedTablePrefix(catalogName));
+            }
+            return schemasFromPredicate;
         }
 
         if (predicate.isEmpty()) {

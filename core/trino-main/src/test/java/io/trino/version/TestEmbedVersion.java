@@ -13,39 +13,25 @@
  */
 package io.trino.version;
 
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.testng.Assert.assertEquals;
 
 public class TestEmbedVersion
 {
-    private EmbedVersion embedVersion;
-
-    @BeforeClass
-    public void setUp()
-    {
-        embedVersion = new EmbedVersion("123-some-test-version");
-    }
-
-    @AfterClass(alwaysRun = true)
-    public void tearDown()
-    {
-        embedVersion = null;
-    }
+    private final EmbedVersion embedVersion = new EmbedVersion("123-some-test-version");
 
     @Test
     public void testEmbedVersionInRunnable()
     {
         AtomicInteger counter = new AtomicInteger();
         embedVersion.embedVersion((Runnable) counter::incrementAndGet).run();
-        assertEquals(counter.get(), 1);
+        assertThat(counter.get()).isEqualTo(1);
 
         assertThatThrownBy(() ->
                 embedVersion.embedVersion((Runnable) () -> {
@@ -64,8 +50,8 @@ public class TestEmbedVersion
         String value = embedVersion.embedVersion(() -> {
             return "abc" + counter.incrementAndGet();
         }).call();
-        assertEquals(value, "abc1");
-        assertEquals(counter.get(), 1);
+        assertThat(value).isEqualTo("abc1");
+        assertThat(counter.get()).isEqualTo(1);
 
         assertThatThrownBy(() ->
                 embedVersion.embedVersion((Callable<String>) () -> {

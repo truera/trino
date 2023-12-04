@@ -37,14 +37,40 @@ public interface BlockBuilder
     long getRetainedSizeInBytes();
 
     /**
+     * Append the specified value.
+     */
+    void append(ValueBlock block, int position);
+
+    /**
+     * Append the specified value multiple times.
+     */
+    void appendRepeated(ValueBlock block, int position, int count);
+
+    /**
+     * Append the values in the specified range.
+     */
+    void appendRange(ValueBlock block, int offset, int length);
+
+    /**
+     * Append the values at the specified positions.
+     */
+    void appendPositions(ValueBlock block, int[] positions, int offset, int length);
+
+    /**
      * Appends a null value to the block.
      */
     BlockBuilder appendNull();
 
     /**
      * Builds the block. This method can be called multiple times.
+     * The return value may be a block such as RLE to allow for optimizations when all block values are the same.
      */
     Block build();
+
+    /**
+     * Builds a ValueBlock. This method can be called multiple times.
+     */
+    ValueBlock buildValueBlock();
 
     /**
      * Creates a new block builder of the same type based on the current usage statistics of this block builder.

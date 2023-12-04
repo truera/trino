@@ -21,8 +21,9 @@ import io.trino.plugin.hive.metastore.HiveMetastore;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.DistributedQueryRunner;
 import io.trino.testing.QueryRunner;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -34,10 +35,13 @@ import static com.google.inject.util.Modules.EMPTY_MODULE;
 import static io.trino.testing.TestingNames.randomNameSuffix;
 import static io.trino.testing.TestingSession.testSessionBuilder;
 import static java.lang.String.format;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
 
 /**
  * Tests querying views on a schema which has a mix of Hive and Delta Lake tables.
  */
+@TestInstance(PER_CLASS)
 public abstract class BaseDeltaLakeSharedMetastoreViewsTest
         extends AbstractTestQueryFramework
 {
@@ -154,7 +158,24 @@ public abstract class BaseDeltaLakeSharedMetastoreViewsTest
         }
     }
 
-    @AfterClass(alwaysRun = true)
+    @Test
+    public void testNonDeltaTablesCannotBeAccessed()
+    {
+        String schemaName = "test_schema" + randomNameSuffix();
+        String tableName = "hive_table";
+
+        assertUpdate("CREATE SCHEMA %s.%s".formatted(HIVE_CATALOG_NAME, schemaName));
+        try {
+            assertUpdate("CREATE TABLE %s.%s.%s(id BIGINT)".formatted(HIVE_CATALOG_NAME, schemaName, tableName));
+            assertThat(computeScalar(format("SHOW TABLES FROM %s LIKE '%s'", schemaName, tableName))).isEqualTo(tableName);
+            assertQueryFails("DESCRIBE " + schemaName + "." + tableName, ".* is not a Delta Lake table");
+        }
+        finally {
+            assertUpdate("DROP SCHEMA %s.%s CASCADE".formatted(HIVE_CATALOG_NAME, schemaName));
+        }
+    }
+
+    @AfterAll
     public void cleanup()
             throws IOException
     {

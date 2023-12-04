@@ -18,6 +18,7 @@ import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 import io.trino.Session;
+import io.trino.plugin.base.util.UncheckedCloseable;
 import io.trino.plugin.hive.metastore.HiveMetastore;
 import io.trino.spi.connector.SchemaNotFoundException;
 import io.trino.testing.AbstractTestQueryFramework;
@@ -137,7 +138,7 @@ public abstract class BaseS3AndGlueMetastoreTest
             assertUpdate("CREATE TABLE " + qualifiedTableName + "(col_int int, col_str varchar)" + partitionQueryPart);
             try (UncheckedCloseable ignoredDropTable = onClose("DROP TABLE " + qualifiedTableName)) {
                 // in case of regular CREATE TABLE, location has generated suffix
-                String expectedTableLocationPattern = (schemaLocation.endsWith("/") ? schemaLocation : schemaLocation + "/") + tableName + "-[a-z0-9]+";
+                String expectedTableLocationPattern = Pattern.quote(schemaLocation.endsWith("/") ? schemaLocation : schemaLocation + "/") + tableName + "-[a-z0-9]+";
                 actualTableLocation = getTableLocation(qualifiedTableName);
                 assertThat(actualTableLocation).matches(expectedTableLocationPattern);
 
@@ -323,6 +324,8 @@ public abstract class BaseS3AndGlueMetastoreTest
         DOUBLE_SLASH("s3://%s/%s//double_slash/%s"),
         TRIPLE_SLASH("s3://%s/%s///triple_slash/%s"),
         PERCENT("s3://%s/%s/a%%percent/%s"),
+        HASH("s3://%s/%s/a#hash/%s"),
+        QUESTION_MARK("s3://%s/%s/a?question_mark/%s"),
         WHITESPACE("s3://%s/%s/a whitespace/%s"),
         TRAILING_WHITESPACE("s3://%s/%s/trailing_whitespace/%s "),
         /**/;
@@ -343,12 +346,5 @@ public abstract class BaseS3AndGlueMetastoreTest
         {
             return locationPattern.formatted(bucketName, schemaName, tableName);
         }
-    }
-
-    protected interface UncheckedCloseable
-            extends AutoCloseable
-    {
-        @Override
-        void close();
     }
 }
